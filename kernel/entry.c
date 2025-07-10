@@ -93,7 +93,7 @@ static int __init driver_entry(void)
 {
 	int ret;
 	devicename = at_usb7;
-	#devicename = get_rand_str();//注释此行关闭随机驱动
+	//devicename = get_rand_str();//注释此行关闭随机驱动
 
 	//1.动态申请设备号
 	ret = alloc_chrdev_region(&mem_tool_dev_t, 0, 1, devicename);
