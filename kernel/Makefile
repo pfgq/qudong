@@ -1,1 +1,1 @@
-obj-$(CONFIG_HACK) += entry.o
+obj-m += entry.o
