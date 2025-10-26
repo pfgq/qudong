@@ -178,7 +178,6 @@ __attribute__((no_sanitize("cfi"))) void init_page_util(void)
 
 uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
 {
-
     uint64_t pxd_bits = page_shift_t - 3;
     uint64_t pxd_ptrs = 1u << pxd_bits;
     uint64_t pxd_va = pgd;
@@ -186,7 +185,11 @@ uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
     uint64_t pxd_entry_va = 0;
     uint64_t block_lv = 0;
     int64_t lv = 0;
-    //int64_t lv;
+    uint64_t pxd_shift = 0;   // 提前声明
+    uint64_t pxd_index = 0;   // 提前声明
+    uint64_t pxd_desc = 0;    // 提前声明
+    uint64_t block_bits = 0;  // 提前声明
+
     if(page_shift_t == 0 || page_level_c == 0 || page_shift_t == 0)
         return NULL;
     // ================
@@ -196,16 +199,15 @@ uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
     //__flush_dcache_area((void *)pxd_va, page_size_t);
 
     for (lv = 4 - page_level_c; lv < 4; lv++) {
-        uint64_t pxd_shift = (page_shift_t - 3) * (4 - lv) + 3;
-        uint64_t pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
+        pxd_shift = (page_shift_t - 3) * (4 - lv) + 3;
+        pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
         pxd_entry_va = pxd_va + pxd_index * 8;
         if (!pxd_entry_va) return 0;
-        uint64_t pxd_desc = *((uint64_t *)pxd_entry_va);
+        pxd_desc = *((uint64_t *)pxd_entry_va);
         if ((pxd_desc & 0b11) == 0b11) { // table
             pxd_pa = pxd_desc & (((1ul << (48 - page_shift_t)) - 1) << page_shift_t);
         } else if ((pxd_desc & 0b11) == 0b01) { // block
-            // 4k page: lv1, lv2. 16k and 64k page: only lv2.
-            uint64_t block_bits = (3 - lv) * pxd_bits + page_shift_t;
+            block_bits = (3 - lv) * pxd_bits + page_shift_t;
             pxd_pa = pxd_desc & (((1ul << (48 - block_bits)) - 1) << block_bits);
             block_lv = lv;
         } else { // invalid
@@ -317,6 +319,8 @@ static int hook_func(unsigned long hook_function, int nr,
     //orginal_pte = *pte;
     *pte = orginal_pte;
     flush_tlb_all();
+
+    return 0; // 补充 return，避免非void函数缺return警告
 }
 
 static int __init my_module_init(void) {
