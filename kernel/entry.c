@@ -178,46 +178,59 @@ __attribute__((no_sanitize("cfi"))) void init_page_util(void)
 
 uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
 {
-
-    uint64_t pxd_bits = page_shift_t - 3;
-    uint64_t pxd_ptrs = 1u << pxd_bits;
-    uint64_t pxd_va = pgd;
-    uint64_t pxd_pa = virt_to_phys((void*)pxd_va);
+    /* 把所有局部变量在块头声明，避免 mixing declarations and code 编译错误 */
+    uint64_t pxd_bits;
+    uint64_t pxd_ptrs;
+    uint64_t pxd_va;
+    uint64_t pxd_pa;
     uint64_t pxd_entry_va = 0;
+    uint64_t pxd_desc;
     uint64_t block_lv = 0;
     int64_t lv = 0;
-    //int64_t lv;
-    if(page_shift_t == 0 || page_level_c == 0 || page_shift_t == 0)
-        return NULL;
-    // ================
-    // Branch to some function (even empty), It can work,
-    // I don't know why, if anyone knows, please let me know. thank you very much.
-    // ================
-    //__flush_dcache_area((void *)pxd_va, page_size_t);
 
+    if (page_shift_t == 0 || page_level_c == 0)
+        return NULL;
+
+    /* 初始化 */
+    pxd_bits = page_shift_t - 3;
+    pxd_ptrs = 1u << pxd_bits;
+    pxd_va = pgd;
+    pxd_pa = virt_to_phys((void *)pxd_va);
+
+    /* 主循环：遍历页表层级 */
     for (lv = 4 - page_level_c; lv < 4; lv++) {
         uint64_t pxd_shift = (page_shift_t - 3) * (4 - lv) + 3;
         uint64_t pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
+
         pxd_entry_va = pxd_va + pxd_index * 8;
-        if (!pxd_entry_va) return 0;
-        uint64_t pxd_desc = *((uint64_t *)pxd_entry_va);
-        if ((pxd_desc & 0b11) == 0b11) { // table
+        if (!pxd_entry_va)
+            return NULL;
+
+        /* 将原先在中间声明并赋值的变量分开处理，避免混合声明 */
+        pxd_desc = *((uint64_t *)pxd_entry_va);
+
+        if ((pxd_desc & 0b11) == 0b11) { /* table */
             pxd_pa = pxd_desc & (((1ul << (48 - page_shift_t)) - 1) << page_shift_t);
-        } else if ((pxd_desc & 0b11) == 0b01) { // block
-            // 4k page: lv1, lv2. 16k and 64k page: only lv2.
+        } else if ((pxd_desc & 0b11) == 0b01) { /* block */
             uint64_t block_bits = (3 - lv) * pxd_bits + page_shift_t;
             pxd_pa = pxd_desc & (((1ul << (48 - block_bits)) - 1) << block_bits);
             block_lv = lv;
-        } else { // invalid
-            return 0;
+        } else { /* invalid */
+            return NULL;
         }
-        //
+
         pxd_va = (uint64_t)phys_to_virt((phys_addr_t)pxd_pa);
         if (block_lv) {
             break;
         }
     }
-    return (uint64_t *)pxd_entry_va;
+
+    /* 所有路径都有默认返回（条目地址）或在早期返回 NULL。
+       如果到达这里 pxd_entry_va 有意义，返回它；否则保证返回 NULL。 */
+    if (pxd_entry_va)
+        return (uint64_t *)pxd_entry_va;
+
+    return NULL;
 }
 
 
