@@ -54,9 +54,9 @@ static uintptr_t read_kallsyms(const char *symbol) {
     loff_t pos = 0;
     char *buf;
     char sym_name[256];
-    char *addr_str;
+	char *addr_str;
     char *type_str;
-    char *name_str;
+	char *name_str;
     uintptr_t addr;
     char type;
     mm_segment_t old_fs;
@@ -120,10 +120,10 @@ static uintptr_t read_kallsyms(const char *symbol) {
 }
 unsigned long get_kallsyms_lookup_name_addr(void)
 {
-    unsigned long ret = 0;
-    setts(0);
-    ret = read_kallsyms("kallsyms_lookup_name");
-    return ret;
+	unsigned long ret = 0;
+	setts(0);
+	ret = read_kallsyms("kallsyms_lookup_name");
+	return ret;
 }
 
 static uint64_t page_size_t = 0;
@@ -178,6 +178,7 @@ __attribute__((no_sanitize("cfi"))) void init_page_util(void)
 
 uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
 {
+
     uint64_t pxd_bits = page_shift_t - 3;
     uint64_t pxd_ptrs = 1u << pxd_bits;
     uint64_t pxd_va = pgd;
@@ -185,19 +186,21 @@ uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
     uint64_t pxd_entry_va = 0;
     uint64_t block_lv = 0;
     int64_t lv = 0;
-    uint64_t pxd_shift;
-    uint64_t pxd_index;
-    uint64_t pxd_desc;
-
+    //int64_t lv;
     if(page_shift_t == 0 || page_level_c == 0 || page_shift_t == 0)
         return NULL;
+    // ================
+    // Branch to some function (even empty), It can work,
+    // I don't know why, if anyone knows, please let me know. thank you very much.
+    // ================
+    //__flush_dcache_area((void *)pxd_va, page_size_t);
 
     for (lv = 4 - page_level_c; lv < 4; lv++) {
-        pxd_shift = (page_shift_t - 3) * (4 - lv) + 3;
-        pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
+        uint64_t pxd_shift = (page_shift_t - 3) * (4 - lv) + 3;
+        uint64_t pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
         pxd_entry_va = pxd_va + pxd_index * 8;
         if (!pxd_entry_va) return 0;
-        pxd_desc = *((uint64_t *)pxd_entry_va);
+        uint64_t pxd_desc = *((uint64_t *)pxd_entry_va);
         if ((pxd_desc & 0b11) == 0b11) { // table
             pxd_pa = pxd_desc & (((1ul << (48 - page_shift_t)) - 1) << page_shift_t);
         } else if ((pxd_desc & 0b11) == 0b01) { // block
@@ -208,6 +211,7 @@ uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
         } else { // invalid
             return 0;
         }
+        //
         pxd_va = (uint64_t)phys_to_virt((phys_addr_t)pxd_pa);
         if (block_lv) {
             break;
@@ -224,71 +228,71 @@ inline uint64_t *pgtable_entry_kernel(uint64_t va)
 
 long handle_ioctl(unsigned int fd, unsigned int const cmd, unsigned long const arg)
 {
-    static COPY_MEMORY cm;
-    static MODULE_BASE mb;
-    static char name[0x100] = {0};
-    
-    switch (cmd) {
-        case OP_READ_MEM:
-            {
-                if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
-                    return -1;
-                }
-                if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
-                    return -1;
-                }
-            }
-            break;
-        case OP_WRITE_MEM:
-            {
-                if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
-                    return -1;
-                }
-                if (write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
-                    return -1;
-                }
-            }
-            break;
-        case OP_MODULE_BASE:
-            {
-                if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 
-                || copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
-                    return -1;
-                }
-                mb.base = get_module_base(mb.pid, name);
-                if (copy_to_user((void __user*)arg, &mb, sizeof(mb)) !=0) {
-                    return -1;
-                }
-            }
-            break;
-        default:
-            break;
-    }
-    return 0;
+	static COPY_MEMORY cm;
+	static MODULE_BASE mb;
+	static char name[0x100] = {0};
+	
+	switch (cmd) {
+		case OP_READ_MEM:
+			{
+				if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
+					return -1;
+				}
+				if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
+					return -1;
+				}
+			}
+			break;
+		case OP_WRITE_MEM:
+			{
+				if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
+					return -1;
+				}
+				if (write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
+					return -1;
+				}
+			}
+			break;
+		case OP_MODULE_BASE:
+			{
+				if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 
+				|| copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
+					return -1;
+				}
+				mb.base = get_module_base(mb.pid, name);
+				if (copy_to_user((void __user*)arg, &mb, sizeof(mb)) !=0) {
+					return -1;
+				}
+			}
+			break;
+		default:
+			break;
+	}
+	return 0;
 }
 
 
 long new_hook_ioctl(const struct pt_regs *kregs)
 {
-    long ret = 0;
-    unsigned int fd = (unsigned int)kregs->regs[0];
-    unsigned int cmd = (unsigned int)kregs->regs[1];
+	long ret = 0;
+	unsigned int fd = (unsigned int)kregs->regs[0];
+	unsigned int cmd = (unsigned int)kregs->regs[1];
     unsigned long arg = (unsigned long)kregs->regs[2];
-    if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
-        ret = handle_ioctl(fd, cmd, arg);
-    else
-        ret = new_original_ioctl(kregs);
-    return ret;
+	if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
+	ret = handle_ioctl(fd, cmd, arg);
+	else
+	ret = new_original_ioctl(kregs);
+	return ret;
 }
 
 asmlinkage long hook_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
-    long ret = 0;
-    if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
-        ret = handle_ioctl(fd, cmd, arg);
+	long ret = 0;
+	if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
+    ret = handle_ioctl(fd, cmd, arg);
     else
-        ret = original_ioctl(fd, cmd, arg);
-    return ret;
+	ret = original_ioctl(fd, cmd, arg);
+	return ret;
 }
 
 static int hook_func(unsigned long hook_function, int nr,
@@ -310,10 +314,9 @@ static int hook_func(unsigned long hook_function, int nr,
     
     sys_table[nr] = hook_function;
     
+    //orginal_pte = *pte;
     *pte = orginal_pte;
     flush_tlb_all();
-
-    return 0;   // 补充返回值，避免不完整路径
 }
 
 static int __init my_module_init(void) {
@@ -326,17 +329,17 @@ static int __init my_module_init(void) {
     #endif
     
     if (!IS_ERR(filp_open("/proc/sched_debug", O_RDONLY, 0))) {
-        remove_proc_subtree("sched_debug", NULL); // /proc/sched_debug。
-    }
-    if (!IS_ERR(filp_open("/proc/uevents_records", O_RDONLY, 0))) {
-        remove_proc_entry("uevents_records", NULL); // /proc/uevents_records。
-    }
-    
-    list_del(&THIS_MODULE->list); //lsmod,/proc/modules
+		remove_proc_subtree("sched_debug", NULL); // /proc/sched_debug。
+	}
+	if (!IS_ERR(filp_open("/proc/uevents_records", O_RDONLY, 0))) {
+		remove_proc_entry("uevents_records", NULL); // /proc/uevents_records。
+	}
+	
+	list_del(&THIS_MODULE->list); //lsmod,/proc/modules
     kobject_del(&THIS_MODULE->mkobj.kobj); // /sys/modules
     list_del(&THIS_MODULE->mkobj.kobj.entry); // kobj struct list_head entry
 
-    printk("[Thook] init\n");
+	printk("[Thook] init\n");
     return 0;
 }
 
@@ -358,5 +361,5 @@ MODULE_DESCRIPTION("Custom syscall module without kprobes");
 MODULE_AUTHOR("万载");
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
-    MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver); 
+	MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver); 
 #endif
