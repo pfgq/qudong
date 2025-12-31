@@ -70,7 +70,7 @@ static struct mem_tool_device *memdev;
 static dev_t mem_tool_dev_t;
 static struct class *mem_tool_class;
 // 固定驱动名
-static const char *devicename = "atusb7";
+static const char *devicename = "atusb";
 
 int dispatch_open(struct inode *node, struct file *file)
 {
@@ -93,7 +93,7 @@ int dispatch_close(struct inode *node, struct file *file)
 static int __init driver_entry(void)
 {
     int ret;
-    //devicename = DEVICE_NAME;
+    devicename = DEVICE_NAME;
     //devicename = get_rand_str();//注释此行关闭随机驱动
 
     //1.动态申请设备号
