@@ -331,51 +331,40 @@ static int hook_func(unsigned long hook_function, int nr, unsigned long *sys_tab
 
 static int __init my_module_init(void)
 {
-    int ret;
-    printk("[Thook] ==========================================\n");
-    printk("[Thook] 驱动开始加载...\n");
-
-    // 1. 获取 sys_call_table 地址
-    // 注意：这里使用你代码里已有的 read_kallsyms
+    // 1. 获取系统调用表地址 (利用你已有的 read_kallsyms)
     __sys_call_table = (unsigned long *)read_kallsyms("sys_call_table");
     
-    if (!__sys_call_table || __sys_call_table == (void *)-1) {
-        printk("[Thook] [错误] 无法定位 sys_call_table，加载终止。\n");
-        return -EINVAL; 
+    if (!__sys_call_table) {
+        printk("[Thook] 错误：无法找到 sys_call_table 地址\n");
+        return -EINVAL;
     }
-    printk("[Thook] [成功] 找到 sys_call_table: %px\n", __sys_call_table);
+    printk("[Thook] sys_call_table 找到: %px\n", __sys_call_table);
 
-    // 2. 初始化页表计算工具
-    // 这个函数会打印 page_size_t, pgd_k 等关键信息
-    printk("[Thook] 正在初始化页表工具...\n");
+    // 2. 初始化页表工具 (必须调用，否则无法修改内存权限)
     init_page_util();
 
-    // 3. 执行系统调用 Hook
-    printk("[Thook] 正在尝试 Hook IOCTL (编号: %d)...\n", __NR_ioctl);
+    // 3. 执行 Hook
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 14, 186)
-    ret = hook_func((unsigned long)hook_ioctl, __NR_ioctl, __sys_call_table);
+    int ret = hook_func((unsigned long)hook_ioctl, __NR_ioctl, __sys_call_table);
 #else
-    // 现代内核通常使用 pt_regs 版本的 Hook
-    ret = hook_func((unsigned long)new_hook_ioctl, __NR_ioctl, __sys_call_table);
+    int ret = hook_func((unsigned long)new_hook_ioctl, __NR_ioctl, __sys_call_table);
 #endif
 
     if (ret != 0) {
-        printk("[Thook] [错误] Hook 失败，错误码: %d\n", ret);
+        printk("[Thook] Hook 失败，错误码: %d\n", ret);
         return -EFAULT;
     }
-    printk("[Thook] [成功] IOCTL 已成功拦截。\n");
 
-    // 4. 清理痕迹 (可选，调试阶段建议先注释掉，防止删除了 proc 导致无法调试)
-    /*
+    // --- 以下是原有的清理/隐藏逻辑 ---
     if (!IS_ERR(filp_open("/proc/sched_debug", O_RDONLY, 0))) {
         remove_proc_subtree("sched_debug", NULL);
     }
+    
+    // 隐藏模块
     list_del(&THIS_MODULE->list);
     kobject_del(&THIS_MODULE->mkobj.kobj);
-    */
 
-    printk("[Thook] 驱动加载完成，一切就绪！\n");
-    printk("[Thook] ==========================================\n");
+    printk("[Thook] Hook 成功加载！\n");
     return 0;
 }
 
