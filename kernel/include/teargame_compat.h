@@ -306,9 +306,6 @@ static inline bool tear_pmd_huge(pmd_t pmd)
  * Static Assertions for Compatibility
  * ============================================================================
  */
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)
-  #warning "TearGame: building on < 5.10; compatibility mode enabled (may be incomplete)"
-#endif
 
 #ifndef CONFIG_ARM64
   #warning "TearGame is optimized for ARM64 architecture"
