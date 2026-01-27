@@ -640,6 +640,7 @@ bool read_process_memory(pid_t pid, unsigned long addr,
         /* 安全检查: 多层缺页检测 */
         if (tear_would_fault(mm, current_addr)) {
             int status = tear_page_status(mm, current_addr);
+            (void)status;
             tear_debug("内存读取: 页面异常 addr=0x%lx status=%s\n", 
                        current_addr, tear_page_status_str(status));
             break;
