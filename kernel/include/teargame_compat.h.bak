@@ -307,7 +307,7 @@ static inline bool tear_pmd_huge(pmd_t pmd)
  * ============================================================================
  */
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5,10,0)
-  #warning "TearGame: building on < 5.10; compatibility mode enabled (may be incomplete)"
+  #error "TearGame requires Linux kernel 5.10 or later"
 #endif
 
 #ifndef CONFIG_ARM64
