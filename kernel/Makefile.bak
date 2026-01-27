@@ -15,4 +15,3 @@ entry-objs := \
 	antidbg.o \
 	file_hide.o \
 	proc_hide.o
-ccflags-y += -I$(src)/include
