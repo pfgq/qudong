@@ -639,12 +639,11 @@ bool read_process_memory(pid_t pid, unsigned long addr,
 #if TEAR_SECURITY_CHECK_PRESENT
         /* 安全检查: 多层缺页检测 */
         if (tear_would_fault(mm, current_addr)) {
-    int status = tear_page_status(mm, current_addr);
-    tear_debug("内存读取: 页面异常 addr=0x%lx status=%s\n",
-               current_addr, tear_page_status_str(status));
-    (void)status; /* 防止在 tear_debug 被编译为空时出现 unused-variable 警告 */
-    break;
-}
+            int status = tear_page_status(mm, current_addr);
+            tear_debug("内存读取: 页面异常 addr=0x%lx status=%s\n", 
+                       current_addr, tear_page_status_str(status));
+            break;
+        }
 #endif
         
         /* 获取物理地址（使用缓存） */
