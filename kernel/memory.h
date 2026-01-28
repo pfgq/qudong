@@ -156,21 +156,26 @@ bool read_process_memory(pid_t pid, uintptr_t addr, void* buffer, size_t size)
 	size_t max;
 	size_t count = 0;
 
+	printk(KERN_INFO "[Thook] read_process_memory: pid=%d addr=0x%lx size=%lu buffer=%p\n", pid, addr, size, buffer);
+
 	task = pid_task(find_vpid(pid), PIDTYPE_PID);
 	if (!task) {
+		printk(KERN_ERR "[Thook] read_process_memory: pid_task fail\n");
 		return false;
 	}
 	mm = get_task_mm(task);
 	if (!mm) {
+		printk(KERN_ERR "[Thook] read_process_memory: get_task_mm fail\n");
 		return false;
 	}
 	while (size > 0) {
 		pa = translate_linear_address(mm, addr);
 		max = min(PAGE_SIZE - (addr & (PAGE_SIZE - 1)), min(size, PAGE_SIZE));
 		if (!pa) {
+			printk(KERN_ERR "[Thook] read_process_memory: translate_linear_address fail, va=0x%lx\n", addr);
 			goto none_phy_addr;
 		}
-		//printk("[*] physical_address = %lx",pa);
+		printk(KERN_INFO "[Thook] read_process_memory: pa=0x%llx, max=%zu\n", (unsigned long long)pa, max);
 		count = read_physical_address(pa, buffer, max);
 	none_phy_addr:
 		size -= max;
@@ -180,6 +185,7 @@ bool read_process_memory(pid_t pid, uintptr_t addr, void* buffer, size_t size)
 	mmput(mm);
 	return count;
 }
+
 
 bool write_process_memory(pid_t pid, uintptr_t addr, void* buffer, size_t size)
 {

@@ -1,5 +1,5 @@
 MODULE_NAME := Thook
-RESMAN_CORE_OBJS:=main.o
+RESMAN_CORE_OBJS:=entry.o
 RESMAN_GLUE_OBJS:=
 ccflags-y += -Wno-error
 ccflags-y += -std=gnu89
