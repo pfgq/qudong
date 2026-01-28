@@ -301,15 +301,15 @@ long new_hook_ioctl(const struct pt_regs *kregs)
 	return ret;
 }
 
+// hook_ioctl 改成这样
 asmlinkage long hook_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
-	long ret = 0;
-	if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
-    ret = handle_ioctl(fd, cmd, arg);
+    if (cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
+        return handle_ioctl(fd, cmd, arg);
     else
-	ret = original_ioctl(fd, cmd, arg);
-	return ret;
+        return original_ioctl(fd, cmd, arg);
 }
+
 
 static int hook_func(unsigned long hook_function, int nr,
         unsigned long *sys_table)

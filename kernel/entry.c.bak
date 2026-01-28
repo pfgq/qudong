@@ -231,45 +231,61 @@ long handle_ioctl(unsigned int fd, unsigned int const cmd, unsigned long const a
 	static COPY_MEMORY cm;
 	static MODULE_BASE mb;
 	static char name[0x100] = {0};
-	
+
+	printk(KERN_INFO "[Thook] handle_ioctl: fd=%d cmd=0x%x arg=0x%lx\n", fd, cmd, arg);
+
 	switch (cmd) {
 		case OP_READ_MEM:
 			{
+				printk(KERN_INFO "[Thook] OP_READ_MEM: arg=%p\n", (void*)arg);
 				if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
+					printk(KERN_ERR "[Thook] copy_from_user fail (OP_READ_MEM)\n");
 					return -1;
 				}
+				printk(KERN_INFO "[Thook] OP_READ_MEM: pid=%d addr=0x%lx size=%lu buffer=%p\n", cm.pid, cm.addr, cm.size, cm.buffer);
 				if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
+					printk(KERN_ERR "[Thook] read_process_memory fail: pid=%d addr=0x%lx\n", cm.pid, cm.addr);
 					return -1;
 				}
 			}
 			break;
 		case OP_WRITE_MEM:
 			{
+				printk(KERN_INFO "[Thook] OP_WRITE_MEM: arg=%p\n", (void*)arg);
 				if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
+					printk(KERN_ERR "[Thook] copy_from_user fail (OP_WRITE_MEM)\n");
 					return -1;
 				}
+				printk(KERN_INFO "[Thook] OP_WRITE_MEM: pid=%d addr=0x%lx size=%lu buffer=%p\n", cm.pid, cm.addr, cm.size, cm.buffer);
 				if (write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
+					printk(KERN_ERR "[Thook] write_process_memory fail: pid=%d addr=0x%lx\n", cm.pid, cm.addr);
 					return -1;
 				}
 			}
 			break;
 		case OP_MODULE_BASE:
 			{
+				printk(KERN_INFO "[Thook] OP_MODULE_BASE: arg=%p\n", (void*)arg);
 				if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 
 				|| copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
+					printk(KERN_ERR "[Thook] copy_from_user fail (OP_MODULE_BASE)\n");
 					return -1;
 				}
+				printk(KERN_INFO "[Thook] OP_MODULE_BASE: pid=%d name=%s\n", mb.pid, name);
 				mb.base = get_module_base(mb.pid, name);
 				if (copy_to_user((void __user*)arg, &mb, sizeof(mb)) !=0) {
+					printk(KERN_ERR "[Thook] copy_to_user fail (OP_MODULE_BASE)\n");
 					return -1;
 				}
 			}
 			break;
 		default:
+			printk(KERN_INFO "[Thook] Unknown cmd: 0x%x\n", cmd);
 			break;
 	}
 	return 0;
 }
+
 
 
 long new_hook_ioctl(const struct pt_regs *kregs)
