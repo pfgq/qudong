@@ -1,4 +1,4 @@
-MODULE_NAME := Thook
+MODULE_NAME := main
 RESMAN_CORE_OBJS:=main.o
 RESMAN_GLUE_OBJS:=
 ccflags-y += -Wno-error
