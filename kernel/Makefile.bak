@@ -29,7 +29,7 @@ ccflags-y += -DMODULE_NAME=\"$(MODULE_NAME)\"
 # Optimization flags
 ccflags-y += -O2 -fno-strict-aliasing
 ccflags-y += -fno-common -fno-delete-null-pointer-checks
-ccflags-y += -Wno-error
+
 # Debug support (uncomment for debug build)
 # ccflags-y += -DDEBUG -g
 
