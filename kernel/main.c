@@ -1,24 +1,15 @@
 #include <linux/module.h>
-#include <linux/tty.h>
-#include <linux/proc_fs.h>
 #include <linux/kernel.h>
 #include <linux/kprobes.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
-#include <linux/sched.h>
-#include <linux/mm.h>
-#include <linux/syscalls.h>
 #include <linux/version.h>
-
 #include "comm.h"
 #include "memory.h"
 #include "process.h"
 
-/* ============================================================
- * 你原有的业务逻辑：完全不动
- * ============================================================ */
-
-long handle_ioctl(unsigned int fd, unsigned int const cmd, unsigned long const arg)
+// ======================= 你的业务逻辑，不动 =======================
+long handle_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
     static COPY_MEMORY cm;
     static MODULE_BASE mb;
@@ -55,56 +46,30 @@ long handle_ioctl(unsigned int fd, unsigned int const cmd, unsigned long const a
     }
     return 0;
 }
+// ================================================================
 
-/* ============================================================
- * kprobe hook 部分（替代 kallsyms + sys_call_table）
- * ============================================================ */
-
+// kprobe结构体
 static struct kprobe kp;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,17,0)
-/* x86_64 新 ABI */
+// ARM64专用pre_handler，适用于安卓等所有arm64内核
 static int ioctl_kprobe_pre(struct kprobe *p, struct pt_regs *regs)
 {
-    unsigned int fd  = (unsigned int)regs->di;
-    unsigned int cmd = (unsigned int)regs->si;
-    unsigned long arg = regs->dx;
+    unsigned int fd  = (unsigned int)regs->regs[0];  // x0
+    unsigned int cmd = (unsigned int)regs->regs[1];  // x1
+    unsigned long arg = regs->regs[2];               // x2
 
     if (fd == -1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE) {
         long ret = handle_ioctl(fd, cmd, arg);
-        regs->ax = ret;   // 注入返回值
-        return 1;         // 跳过原 sys_ioctl
+        regs->regs[0] = ret; // ARM64返回值
+        return 1;            // 跳过原始sys_ioctl
     }
     return 0;
 }
-#else
-/* 老 ABI */
-static int ioctl_kprobe_pre(struct kprobe *p, struct pt_regs *regs)
-{
-    unsigned int fd  = regs->bx;
-    unsigned int cmd = regs->cx;
-    unsigned long arg = regs->dx;
 
-    if (fd == -1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE) {
-        long ret = handle_ioctl(fd, cmd, arg);
-        regs->ax = ret;
-        return 1;
-    }
-    return 0;
-}
-#endif
-
-/* ============================================================
- * module init / exit
- * ============================================================ */
-
+// 模块加载与卸载
 static int __init my_module_init(void)
 {
     int ret;
-
-    printk("[Thook] ==========================================\n");
-    printk("[Thook] 驱动开始加载（kprobes 版本）...\n");
-
     memset(&kp, 0, sizeof(kp));
     kp.symbol_name = "sys_ioctl";
     kp.pre_handler = ioctl_kprobe_pre;
@@ -114,27 +79,19 @@ static int __init my_module_init(void)
         printk(KERN_ERR "[Thook] register_kprobe failed: %d\n", ret);
         return ret;
     }
-
-    printk("[Thook] [成功] kprobe 已拦截 sys_ioctl\n");
-    printk("[Thook] 驱动加载完成，一切就绪！\n");
-    printk("[Thook] ==========================================\n");
-
+    printk("[Thook] kprobe registered (sys_ioctl, arm64)\n");
     return 0;
 }
 
 static void __exit my_module_exit(void)
 {
     unregister_kprobe(&kp);
-    printk("[Thook] exit\n");
+    printk("[Thook] kprobe unregistered\n");
 }
 
 module_init(my_module_init);
 module_exit(my_module_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Custom syscall module using kprobes");
+MODULE_DESCRIPTION("Custom syscall module using kprobes (ARM64 Android)");
 MODULE_AUTHOR("万载");
-
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
-#endif
