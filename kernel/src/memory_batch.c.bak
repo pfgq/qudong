@@ -7,9 +7,6 @@
  * - 批量页表遍历（减少 mm_struct 获取开销）
  * - 散射/聚集读取（一次性读取多个不连续地址）
  */
-#define tear_kmap_local_page(page)   kmap_atomic(page)
-#define tear_kunmap_local(addr)      kunmap_atomic(addr)
-
 
 #include "teargame.h"
 #include "teargame_security.h"
@@ -178,7 +175,7 @@ bool tear_read_zero_copy(pid_t pid, unsigned long addr, void *out_val, size_t si
 #endif
     
     /* 零拷贝映射 */
-    kaddr = tear_kmap_local_page(page);
+    kaddr = kmap_local_page(page);
     if (!kaddr)
         return false;
     
@@ -209,7 +206,7 @@ bool tear_read_zero_copy(pid_t pid, unsigned long addr, void *out_val, size_t si
         break;
     }
     
-    tear_kunmap_local(kaddr);
+    kunmap_local(kaddr);
     return success;
 }
 
@@ -319,12 +316,12 @@ int tear_scatter_read(pid_t pid, struct tear_scatter_entry *entries, int count)
             chunk = min(e->size - copied, PAGE_SIZE - offset);
             
             /* 零拷贝读取 */
-            kaddr = tear_kmap_local_page(page);
+            kaddr = kmap_local_page(page);
             if (!kaddr)
                 break;
             
             memcpy((char *)temp_buf + copied, kaddr + offset, chunk);
-            tear_kunmap_local(kaddr);
+            kunmap_local(kaddr);
             
             copied += chunk;
             current_addr += chunk;
@@ -461,12 +458,12 @@ int tear_batch_write(pid_t pid, struct tear_batch_write_entry *entries, int coun
             chunk = min(e->size - written, PAGE_SIZE - offset);
             
             /* 零拷贝写入 */
-            kaddr = tear_kmap_local_page(page);
+            kaddr = kmap_local_page(page);
             if (!kaddr)
                 break;
             
             memcpy(kaddr + offset, (char *)temp_buf + written, chunk);
-            tear_kunmap_local(kaddr);
+            kunmap_local(kaddr);
             
             written += chunk;
             current_addr += chunk;
