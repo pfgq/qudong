@@ -7,9 +7,9 @@ typedef struct _COPY_MEMORY {
 
 typedef struct _MODULE_BASE {
     pid_t pid;
-    char name[256];
+    char* name;
     uintptr_t base;
-} MODULE_BASE;
+} MODULE_BASE, *PMODULE_BASE;
 
 enum OPERATIONS {
     OP_INIT_KEY = 0x800,

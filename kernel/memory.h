@@ -150,12 +150,20 @@ size_t write_physical_address(phys_addr_t pa, void* buffer, size_t size) {
 
 bool read_process_memory(pid_t pid, uintptr_t addr, void* buffer, size_t size)
 {
-    struct task_struct* task = pid_task(find_vpid(pid), PIDTYPE_PID);
-    if (!task) return false;
+	struct task_struct* task;
+	struct mm_struct* mm;
+	phys_addr_t pa;
+	size_t max;
+	size_t count = 0;
 
-    int ret = access_process_vm(task, addr, buffer, size, 0);
-    return ret == size;
-}
+	task = pid_task(find_vpid(pid), PIDTYPE_PID);
+	if (!task) {
+		return false;
+	}
+	mm = get_task_mm(task);
+	if (!mm) {
+		return false;
+	}
 	while (size > 0) {
 		pa = translate_linear_address(mm, addr);
 		max = min(PAGE_SIZE - (addr & (PAGE_SIZE - 1)), min(size, PAGE_SIZE));

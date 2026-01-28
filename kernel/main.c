@@ -254,20 +254,17 @@ long handle_ioctl(unsigned int fd, unsigned int const cmd, unsigned long const a
 			}
 			break;
 		case OP_MODULE_BASE:
-{
-    if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0) {
-        return -1;
-    }
-
-    // 这里直接用 mb.name！
-    mb.base = get_module_base(mb.pid, mb.name);
-
-    if (copy_to_user((void __user*)arg, &mb, sizeof(mb)) != 0) {
-        return -1;
-    }
-}
-break;
-
+			{
+				if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 
+				|| copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
+					return -1;
+				}
+				mb.base = get_module_base(mb.pid, name);
+				if (copy_to_user((void __user*)arg, &mb, sizeof(mb)) !=0) {
+					return -1;
+				}
+			}
+			break;
 		default:
 			break;
 	}
