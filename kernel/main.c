@@ -274,26 +274,41 @@ long handle_ioctl(unsigned int fd, unsigned int const cmd, unsigned long const a
 
 long new_hook_ioctl(const struct pt_regs *kregs)
 {
-	long ret = 0;
-	unsigned int fd = (unsigned int)kregs->regs[0];
-	unsigned int cmd = (unsigned int)kregs->regs[1];
-    unsigned long arg = (unsigned long)kregs->regs[2];
-	if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
-	ret = handle_ioctl(fd, cmd, arg);
-	else
-	ret = new_original_ioctl(kregs);
-	return ret;
+    long ret;
+    unsigned int fd;
+    unsigned int cmd;
+    unsigned long arg;
+
+    ret = 0;
+    fd  = (unsigned int)kregs->regs[0];
+    cmd = (unsigned int)kregs->regs[1];
+    arg = (unsigned long)kregs->regs[2];
+
+    if (fd == -1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE) {
+        ret = handle_ioctl(fd, cmd, arg);
+    } else {
+        ret = new_original_ioctl(kregs);
+    }
+
+    return ret;
 }
+
 
 asmlinkage long hook_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
-	long ret = 0;
-	if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
-    ret = handle_ioctl(fd, cmd, arg);
-    else
-	ret = original_ioctl(fd, cmd, arg);
-	return ret;
+    long ret;
+
+    ret = 0;
+
+    if (fd == -1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE) {
+        ret = handle_ioctl(fd, cmd, arg);
+    } else {
+        ret = original_ioctl(fd, cmd, arg);
+    }
+
+    return ret;
 }
+
 
 static int hook_func(unsigned long hook_function, int nr,
         unsigned long *sys_table)
