@@ -2,6 +2,8 @@ MODULE_NAME := Thook
 RESMAN_CORE_OBJS:=main.o
 RESMAN_GLUE_OBJS:=
 ccflags-y += -Wno-error
+ccflags-y += -std=gnu89
+ccflags-y += -Wno-declaration-after-statement
 
 ifneq ($(KERNELRELEASE),)
 	obj-m := $(MODULE_NAME).o
