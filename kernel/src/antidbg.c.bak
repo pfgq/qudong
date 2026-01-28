@@ -375,10 +375,9 @@ bool tear_is_process_traced(pid_t pid)
     traced = (task->ptrace != 0);
     
     if (traced) {
-    pid_t tracer = get_tracer_pid(task);
-    tear_debug("进程 %d 正在被 %d 追踪\n", pid, tracer);
-    (void)tracer; /* 防止 tear_debug 被编译为空时触发 unused-variable */
-}
+        pid_t tracer = get_tracer_pid(task);
+        tear_debug("进程 %d 正在被 %d 追踪\n", pid, tracer);
+    }
     
     put_task_struct(task);
     return traced;
