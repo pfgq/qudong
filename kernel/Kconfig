@@ -1,6 +1,46 @@
-config KERNEL_HACK
-    tristate "Kernel Hack Driver"
-    default m
-    help
-    This is the kernel hack driver for android system.
+# TearGame Kernel Module Configuration
+# For integration into kernel source tree (optional)
 
+config TEARGAME
+	tristate "TearGame Memory Access Module"
+	depends on ARM64
+	default m
+	help
+	  TearGame kernel module provides:
+	  - Cross-process memory read/write
+	  - Process lookup and module base address
+	  - Virtual touch input device
+	  - Module stealth capabilities
+	  
+	  This module requires ARM64 architecture and is designed
+	  for Android devices running Linux kernel 5.10+.
+	  
+	  If unsure, say N.
+
+config TEARGAME_DEBUG
+	bool "Enable TearGame debug output"
+	depends on TEARGAME
+	default n
+	help
+	  Enable verbose debug logging for TearGame module.
+	  This will output detailed information to kernel log.
+	  
+	  Only enable for development/debugging purposes.
+
+config TEARGAME_TOUCH_SLOTS
+	int "Number of multi-touch slots"
+	depends on TEARGAME
+	range 1 16
+	default 10
+	help
+	  Maximum number of simultaneous touch points supported
+	  by the virtual touch device.
+
+config TEARGAME_CACHE_BUCKETS
+	int "Process cache hash buckets"
+	depends on TEARGAME
+	range 64 1024
+	default 256
+	help
+	  Number of hash buckets for process name cache.
+	  Higher values reduce collision but use more memory.
