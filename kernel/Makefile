@@ -1,73 +1,15 @@
-# TearGame Kernel Module Makefile
-# Supports Linux Kernel 5.10+
-# Target: ARM64 (aarch64)
-
-MODULE_NAME := teargame
-
-# Source files
-obj-m := $(MODULE_NAME).o
-$(MODULE_NAME)-objs := \
-	src/main.o \
-	src/command.o \
-	src/memory.o \
-	src/memory_safe.o \
-	src/memory_batch.o \
-	src/process.o \
-	src/process_cache.o \
-	src/touch.o \
-	src/hook.o \
-	src/stealth.o \
-	src/auth.o \
-	src/antidbg.o \
-	src/file_hide.o \
-	src/proc_hide.o
-
-# Include path
-ccflags-y := -I$(src)/include
-ccflags-y += -DMODULE_NAME=\"$(MODULE_NAME)\"
-
-# Optimization flags
-ccflags-y += -O2 -fno-strict-aliasing
-ccflags-y += -fno-common -fno-delete-null-pointer-checks
-ccflags-y += -Wno-error
-# Debug support (uncomment for debug build)
-# ccflags-y += -DDEBUG -g
-
-# Kernel build directory (override with KDIR=xxx)
-KDIR ?= /lib/modules/$(shell uname -r)/build
-
-# Cross compile support
-ARCH ?= arm64
-CROSS_COMPILE ?=
-
-# Build commands
-all: modules
-
-modules:
-	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KDIR) M=$(PWD) modules
-
+MODULE_NAME := Thook
+RESMAN_CORE_OBJS:=main.o
+RESMAN_GLUE_OBJS:=
+ifneq ($(KERNELRELEASE),)
+	obj-m := $(MODULE_NAME).o
+	$(MODULE_NAME)-objs:=$(RESMAN_GLUE_OBJS) $(RESMAN_CORE_OBJS)
+else
+	KDIR := /home/administrator/桌面/munch-s-oss/out
+all:
+	make -j$(nproc) -C $(KDIR) M=$(shell pwd) LLVM=1 LLVM_IAS=1 ARCH=arm64 CC=clang LD=ld.lld OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump NM=llvm-nm STRIP=llvm-strip modules
+	rm -rf *.o *.mod .*.*.cmd *.mod.o *.mod.c *.symvers *.order .tmp_versions
+	llvm-strip --strip-debug $(MODULE_NAME).ko
 clean:
-	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KDIR) M=$(PWD) clean
-	rm -f Module.symvers modules.order
-
-install:
-	$(MAKE) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE) -C $(KDIR) M=$(PWD) modules_install
-
-# Help target
-help:
-	@echo "TearGame Kernel Module Build System"
-	@echo ""
-	@echo "Usage:"
-	@echo "  make              - Build the module"
-	@echo "  make clean        - Clean build files"
-	@echo "  make install      - Install the module"
-	@echo ""
-	@echo "Variables:"
-	@echo "  KDIR              - Kernel source directory"
-	@echo "  ARCH              - Target architecture (default: arm64)"
-	@echo "  CROSS_COMPILE     - Cross compiler prefix"
-	@echo ""
-	@echo "Example (Android cross-compile):"
-	@echo "  make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- KDIR=/path/to/kernel"
-
-.PHONY: all modules clean install help
+	rm -rf *.ko *.o *.mod .*.*.cmd *.mod.o *.mod.c *.symvers *.order .tmp_versions
+endif
