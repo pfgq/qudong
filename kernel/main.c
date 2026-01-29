@@ -265,7 +265,6 @@ long new_hook_ioctl(const struct pt_regs *kregs)
     unsigned int fd = (unsigned int)kregs->regs[0];
     unsigned int cmd = (unsigned int)kregs->regs[1];
     unsigned long arg = (unsigned long)kregs->regs[2];
-    THOOK_LOG("new_hook_ioctl: fd=%u, cmd=0x%x, arg=0x%lx\n", fd, cmd, arg);
 
     if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
         ret = handle_ioctl(fd, cmd, arg);
@@ -361,10 +360,10 @@ static int __init my_module_init(void) {
         remove_proc_entry("uevents_records", NULL);
     }
 
-    // === 注释隐藏模块代码，方便调试/卸载 ===
-    // list_del(&THIS_MODULE->list);
-    // kobject_del(&THIS_MODULE->mkobj.kobj);
-    // list_del(&THIS_MODULE->mkobj.kobj.entry);
+    
+       list_del(&THIS_MODULE->list);
+       kobject_del(&THIS_MODULE->mkobj.kobj);
+       list_del(&THIS_MODULE->mkobj.kobj.entry);
 
     THOOK_LOG("init finish!\n");
     return 0;

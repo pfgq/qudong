@@ -269,12 +269,19 @@ long new_hook_ioctl(const struct pt_regs *kregs)
 
     if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
         ret = handle_ioctl(fd, cmd, arg);
-    else
+    else {
+        // 🔥🔥 这里必须加，避免 new_original_ioctl 为 NULL 导致崩溃
+        if (!new_original_ioctl) {
+            THOOK_LOG("new_original_ioctl is NULL! block syscall\n");
+            return -ENOSYS;
+        }
         ret = new_original_ioctl(kregs);
+    }
 
     THOOK_LOG("new_hook_ioctl ret: %ld\n", ret);
     return ret;
 }
+
 
 asmlinkage long hook_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
@@ -338,6 +345,9 @@ static int __init my_module_init(void) {
         THOOK_LOG("hook_func hook_ioctl (__NR_ioctl)...\n");
         hook_func((unsigned long)hook_ioctl, __NR_ioctl, __sys_call_table);
     #else
+        // 🔥🔥 必须加上这两行！（保存原始指针，避免炸机）
+        new_original_ioctl = (new_syscall_ioctl_t)__sys_call_table[__NR_ioctl];
+        THOOK_LOG("saved new_original_ioctl = %px\n", new_original_ioctl);
         THOOK_LOG("hook_func new_hook_ioctl (__NR_ioctl)...\n");
         hook_func((unsigned long)new_hook_ioctl, __NR_ioctl, __sys_call_table);
     #endif
@@ -351,10 +361,10 @@ static int __init my_module_init(void) {
         remove_proc_entry("uevents_records", NULL);
     }
 
-    // === 注释隐藏模块代码，方便调试/卸载 ===
-    // list_del(&THIS_MODULE->list);
-    // kobject_del(&THIS_MODULE->mkobj.kobj);
-    // list_del(&THIS_MODULE->mkobj.kobj.entry);
+    
+       list_del(&THIS_MODULE->list);
+       kobject_del(&THIS_MODULE->mkobj.kobj);
+       list_del(&THIS_MODULE->mkobj.kobj.entry);
 
     THOOK_LOG("init finish!\n");
     return 0;
