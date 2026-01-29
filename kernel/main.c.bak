@@ -1,18 +1,16 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/tracepoint.h>
-#include <linux/ptrace.h>
-#include <linux/uaccess.h>
-#include <linux/sched.h>
 #include <linux/version.h>
-#include <linux/fs.h>
+#include <linux/ptrace.h>
+#include <trace/events/syscalls.h> // 关键头文件
 
-// 你的自定义头文件
+// 你自己的数据结构和头文件
 #include "comm.h"
 #include "memory.h"
 #include "process.h"
 
+// 命令范围
 #define MIN_CMD OP_INIT_KEY
 #define MAX_CMD OP_MODULE_BASE
 
@@ -22,7 +20,7 @@
 #error "No __NR_ioctl defined"
 #endif
 
-// 你的逻辑
+// 你自己的ioctl逻辑
 static void handle_my_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
     static COPY_MEMORY cm;
@@ -36,7 +34,7 @@ static void handle_my_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg
             ret = -1;
             break;
         }
-        if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
+        if (!read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size)) {
             ret = -1;
         }
         break;
@@ -45,13 +43,13 @@ static void handle_my_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg
             ret = -1;
             break;
         }
-        if (write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
+        if (!write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size)) {
             ret = -1;
         }
         break;
     case OP_MODULE_BASE:
-        if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0
-            || copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
+        if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 ||
+            copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
             ret = -1;
             break;
         }
@@ -63,11 +61,11 @@ static void handle_my_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg
     default:
         break;
     }
-    printk(KERN_INFO "[tracepoint] ioctl intercepted: fd=%u, cmd=0x%x, arg=0x%lx, ret=%ld\n", fd, cmd, arg, ret);
+    printk(KERN_INFO "[Thook] ioctl intercepted: fd=%u, cmd=0x%x, arg=0x%lx, ret=%ld\n", fd, cmd, arg, ret);
 }
 
-// tracepoint 回调
-static void sys_enter_callback(void *ignore, struct pt_regs *regs, long id)
+// tracepoint回调，函数原型必须和trace/events/syscalls.h一致
+static void my_sys_enter(void *ignore, struct pt_regs *regs, long id)
 {
     if (id == NR_IOCTL) {
 #if defined(CONFIG_ARM64)
@@ -85,39 +83,21 @@ static void sys_enter_callback(void *ignore, struct pt_regs *regs, long id)
     }
 }
 
-// tracepoint 查找
-static struct tracepoint *tp_sys_enter = NULL;
-static void lookup_tracepoints(void)
-{
-    struct tracepoint *tp;
-    extern struct tracepoint __start___tracepoints[];
-    extern struct tracepoint __stop___tracepoints[];
-    for (tp = __start___tracepoints; tp < __stop___tracepoints; tp++) {
-        if (strcmp(tp->name, "sys_enter") == 0) {
-            tp_sys_enter = tp;
-            break;
-        }
-    }
-}
-
 static int __init my_module_init(void)
 {
-    lookup_tracepoints();
-    if (tp_sys_enter) {
-        tracepoint_probe_register(tp_sys_enter, (void *)sys_enter_callback, NULL);
-        printk(KERN_INFO "[tracepoint] sys_enter registered\n");
+    int ret = register_trace_sys_enter(my_sys_enter, NULL);
+    if (ret) {
+        printk(KERN_ERR "[Thook] register_trace_sys_enter failed: %d\n", ret);
     } else {
-        printk(KERN_ERR "[tracepoint] sys_enter not found\n");
+        printk(KERN_INFO "[Thook] sys_enter trace registered\n");
     }
-    return 0;
+    return ret;
 }
 
 static void __exit my_module_exit(void)
 {
-    if (tp_sys_enter) {
-        tracepoint_probe_unregister(tp_sys_enter, (void *)sys_enter_callback, NULL);
-        printk(KERN_INFO "[tracepoint] sys_enter unregistered\n");
-    }
+    unregister_trace_sys_enter(my_sys_enter, NULL);
+    printk(KERN_INFO "[Thook] sys_enter trace unregistered\n");
 }
 
 module_init(my_module_init);
