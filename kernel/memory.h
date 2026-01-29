@@ -12,58 +12,6 @@
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
-#ifndef _MEMORY_HELPER_H
-#define _MEMORY_HELPER_H
-
-// ... 你已有的头文件内容 ...
-
-// 全局变量，内核PGD基址，需要模块加载时初始化
-extern uint64_t pgd_k;
-
-// ARM64 内核页表遍历函数（适配之前的init_page_util逻辑）
-static inline uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
-{
-    // 这段是你init_page_util/pgtable_entry那一套的核心部分
-    extern uint64_t page_shift_t, page_level_c, page_size_t;
-    uint64_t pxd_bits = page_shift_t - 3;
-    uint64_t pxd_ptrs = 1u << pxd_bits;
-    uint64_t pxd_va = pgd;
-    uint64_t pxd_pa = virt_to_phys((void*)pxd_va);
-    uint64_t pxd_entry_va = 0;
-    uint64_t block_lv = 0;
-    int64_t lv = 0;
-
-    if (page_shift_t == 0 || page_level_c == 0)
-        return NULL;
-
-    for (lv = 4 - page_level_c; lv < 4; lv++) {
-        uint64_t pxd_shift = (page_shift_t - 3) * (4 - lv) + 3;
-        uint64_t pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
-        pxd_entry_va = pxd_va + pxd_index * 8;
-        if (!pxd_entry_va) return NULL;
-        uint64_t pxd_desc = *((uint64_t *)pxd_entry_va);
-        if ((pxd_desc & 0b11) == 0b11) { // table
-            pxd_pa = pxd_desc & (((1ul << (48 - page_shift_t)) - 1) << page_shift_t);
-        } else if ((pxd_desc & 0b11) == 0b01) { // block
-            block_lv = lv;
-        } else {
-            return NULL;
-        }
-        pxd_va = (uint64_t)phys_to_virt((phys_addr_t)pxd_pa);
-        if (block_lv)
-            break;
-    }
-    return (uint64_t *)pxd_entry_va;
-}
-
-// 内核空间专用遍历（重点！这个就是外部要用的接口）
-static inline uint64_t *pgtable_entry_kernel(uint64_t va)
-{
-    extern uint64_t pgd_k;
-    return pgtable_entry(pgd_k, va);
-}
-
-#endif
 
 #if(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 61))
 phys_addr_t translate_linear_address(struct mm_struct* mm, uintptr_t va) {

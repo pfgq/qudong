@@ -1,17 +1,15 @@
 #include <linux/module.h>
+#include <linux/tty.h>
+#include <linux/proc_fs.h>
 #include <linux/kernel.h>
-#include <linux/init.h>
-#include <linux/fs.h>
+#include <linux/kprobes.h>
 #include <linux/uaccess.h>
 #include <linux/slab.h>
-#include <linux/version.h>
-#include <linux/proc_fs.h>
+#include <linux/sched.h>
 #include <linux/mm.h>
-#include <linux/io.h>
-#include <asm/cacheflush.h>
+#include <linux/syscalls.h>
 #include <asm/tlbflush.h>
-#include <asm/pgtable.h>
-#include <asm/pgtable-prot.h>
+#include <linux/version.h>
 
 #include "comm.h"
 #include "memory.h"
@@ -19,200 +17,367 @@
 
 #define THOOK_LOG(fmt, ...) printk(KERN_INFO "[Thook] " fmt, ##__VA_ARGS__)
 
-// --------- kallsyms 查找 ---------
+#define bits(n, high, low) (((n) << (63u - (high))) >> (63u - (high) + (low)))
+
+typedef asmlinkage long (*syscall_ioctl_t)(unsigned int fd, unsigned int cmd, unsigned long arg);
+typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
+typedef long (*new_syscall_ioctl_t)(const struct pt_regs *);
+kallsyms_lookup_name_t (*my_kallsyms_lookup_name)(const char *name);
+unsigned long *__sys_call_table;
+unsigned long start_address;
+unsigned long finish_address;
+syscall_ioctl_t original_ioctl;
+
+#if LINUX_VERSION_CODE > KERNEL_VERSION(4, 14, 186)
+    new_syscall_ioctl_t new_original_ioctl;
+#endif
+
+static int setts(int value) {
+    struct file *file;
+    loff_t pos = 0;
+    char buf[2];
+
+    file = filp_open("/proc/sys/kernel/kptr_restrict", O_WRONLY, 0);
+    if (IS_ERR(file)) {
+        THOOK_LOG("Failed to open /proc/sys/kernel/kptr_restrict\n");
+        return -EFAULT;
+    }
+
+    snprintf(buf, sizeof(buf), "%d", value);
+    kernel_write(file, buf, strlen(buf), &pos);
+    filp_close(file, NULL);
+
+    THOOK_LOG("Set /proc/sys/kernel/kptr_restrict to %d\n", value);
+    return 0;
+}
+
 static uintptr_t read_kallsyms(const char *symbol) {
     struct file *file;
     loff_t pos = 0;
-    char *buf, *p, *line;
-    uintptr_t addr = 0;
-    ssize_t nread;
+    char *buf;
+    char sym_name[256];
+    char *addr_str;
+    char *type_str;
+    char *name_str;
+    uintptr_t addr;
+    char type;
+    mm_segment_t old_fs;
+    struct seq_file *seq;
+    int found = 0;
 
     file = filp_open("/proc/kallsyms", O_RDONLY, 0);
     if (IS_ERR(file)) {
-        THOOK_LOG("Failed to open /proc/kallsyms\n");
-        return 0;
+        THOOK_LOG("Failed to open kallsyms\n");
+        return -EFAULT;
     }
 
-    buf = kzalloc(512, GFP_KERNEL);
+    old_fs = get_fs();
+    set_fs(get_ds());
+
+    buf = kmalloc(4096, GFP_KERNEL);
     if (!buf) {
         filp_close(file, NULL);
-        THOOK_LOG("Failed to alloc buffer\n");
-        return 0;
+        set_fs(old_fs);
+        THOOK_LOG("Failed to allocate buffer in read_kallsyms\n");
+        return -ENOMEM;
     }
 
-    while ((nread = kernel_read(file, buf, 511, &pos)) > 0) {
-        buf[nread] = 0;
-        p = buf;
-        while ((line = strsep(&p, "\n")) != NULL) {
-            char sym[256], typ;
-            uintptr_t val = 0;
-            if (sscanf(line, "%lx %c %255s", &val, &typ, sym) == 3) {
-                if (strcmp(sym, symbol) == 0) {
-                    addr = val;
-                    goto out;
-                }
+    seq = file->private_data;
+    if (!seq) {
+        THOOK_LOG("Failed to get seq_file from kallsyms\n");
+        kfree(buf);
+        filp_close(file, NULL);
+        set_fs(old_fs);
+        return -EFAULT;
+    }
+
+    while (seq_read(file, buf, 4096, &pos) > 0) {
+        char *line = buf;
+        while (*line) {
+            char *end = strchr(line, '\n');
+            if (end) *end = '\0';
+            addr_str = line;
+            type_str = strchr(line, ' ');
+            if (!type_str) break;
+            *type_str++ = '\0';
+            name_str = strchr(type_str, ' ');
+            if (!name_str) break;
+            *name_str++ = '\0';
+
+            addr = simple_strtoull(addr_str, NULL, 16);
+            type = *type_str;
+            strncpy(sym_name, name_str, sizeof(sym_name) - 1);
+            sym_name[sizeof(sym_name) - 1] = '\0';
+
+            if (strcmp(sym_name, symbol) == 0) {
+                THOOK_LOG("Found symbol %s at %llx type %c\n", sym_name, addr, type);
+                found = 1;
+                kfree(buf);
+                filp_close(file, NULL);
+                set_fs(old_fs);
+                return addr;
             }
+
+            if (end) line = end + 1;
+            else break;
         }
     }
-out:
     kfree(buf);
     filp_close(file, NULL);
-    if (addr)
-        THOOK_LOG("Resolved %s = 0x%lx\n", symbol, addr);
-    else
-        THOOK_LOG("Failed to resolve %s\n", symbol);
-    return addr;
+    set_fs(old_fs);
+    if (!found) THOOK_LOG("Symbol %s not found in kallsyms\n", symbol);
+    return -1;
 }
 
-// --------- ARM64 页表权限处理 ---------
-/**
- * 你必须保证 PTE_DBM / PTE_RDONLY 宏定义正确。
- * 部分定制安卓内核宏定义不同，如遇编译错误，参考
- * arch/arm64/include/asm/pgtable-prot.h
- * 或 /proc/kallsyms 查找内核源码对应位
- */
-
-#ifndef PTE_DBM
-#define PTE_DBM   (1UL << 51)
-#endif
-#ifndef PTE_RDONLY
-#define PTE_RDONLY (1UL << 7)
-#endif
-
-// 你的页表遍历函数（假设你有 pgtable_entry_kernel）
-extern uint64_t *pgtable_entry_kernel(uint64_t va); // 需要你在memory.h实现
-
-static int set_table_rw(uint64_t addr)
+unsigned long get_kallsyms_lookup_name_addr(void)
 {
-    uint64_t *pte = pgtable_entry_kernel(addr);
-    if (!pte) {
-        THOOK_LOG("set_table_rw: failed to get pte!\n");
-        return -1;
-    }
-    *pte = (*pte | PTE_DBM) & ~PTE_RDONLY;
-    flush_tlb_all();
-    THOOK_LOG("set_table_rw: addr=%llx, pte=%llx\n", addr, *pte);
-    return 0;
+    unsigned long ret = 0;
+    setts(0);
+    ret = read_kallsyms("kallsyms_lookup_name");
+    THOOK_LOG("kallsyms_lookup_name addr: %lx\n", ret);
+    return ret;
 }
 
-static int set_table_ro(uint64_t addr)
+static uint64_t page_size_t = 0;
+static uint64_t page_level_c = 0;
+static uint64_t page_shift_t = 0;
+static uint64_t pgd_k_pa = 0;
+static uint64_t pgd_k = 0;
+
+__attribute__((no_sanitize("cfi"))) void init_page_util(void)
 {
-    uint64_t *pte = pgtable_entry_kernel(addr);
-    if (!pte) {
-        THOOK_LOG("set_table_ro: failed to get pte!\n");
-        return -1;
-    }
-    *pte = (*pte & ~PTE_DBM) | PTE_RDONLY;
-    flush_tlb_all();
-    THOOK_LOG("set_table_ro: addr=%llx, pte=%llx\n", addr, *pte);
-    return 0;
+    uint64_t tcr_el1;
+    uint64_t ttbr1_el1;
+    uint64_t va_bits;
+    uint64_t t1sz, tg1, baddr, page_size_mask;
+
+    asm volatile("mrs %0, tcr_el1" : "=r"(tcr_el1));
+
+    t1sz = bits(tcr_el1, 21, 16);
+    tg1 = bits(tcr_el1, 31, 30);
+    va_bits = 64 - t1sz;
+    page_shift_t = 12;
+    if (tg1 == 1) page_shift_t = 14;
+    else if (tg1 == 3) page_shift_t = 16;
+    page_size_t = 1 << page_shift_t;
+    page_level_c = (va_bits - 4) / (page_shift_t - 3);
+
+    asm volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1_el1));
+    baddr = ttbr1_el1 & 0xFFFFFFFFFFFE;
+    page_size_mask = ~(page_size_t - 1);
+    pgd_k_pa = baddr & page_size_mask;
+    pgd_k = (uint64_t)phys_to_virt(pgd_k_pa);
+
+    THOOK_LOG("page_size_t: %lx, page_level_c: %lx, page_shift_t: %lx\n", page_size_t, page_level_c, page_shift_t);
+    THOOK_LOG("pgd_k_pa: %lx, pgd_k: %lx\n", pgd_k_pa, pgd_k);
 }
 
-// --------- IOCTL处理逻辑 ---------
-typedef long (*sys_ioctl_t)(const struct pt_regs *);
-static unsigned long *__sys_call_table = NULL;
-static sys_ioctl_t original_ioctl = NULL;
+uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
+{
+    uint64_t pxd_bits = page_shift_t - 3;
+    uint64_t pxd_ptrs = 1u << pxd_bits;
+    uint64_t pxd_va = pgd;
+    uint64_t pxd_pa = virt_to_phys((void*)pxd_va);
+    uint64_t pxd_entry_va = 0;
+    uint64_t block_lv = 0;
+    int64_t lv = 0;
+    if(page_shift_t == 0 || page_level_c == 0 || page_shift_t == 0)
+        return NULL;
+    for (lv = 4 - page_level_c; lv < 4; lv++) {
+        uint64_t pxd_shift = (page_shift_t - 3) * (4 - lv) + 3;
+        uint64_t pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
+        pxd_entry_va = pxd_va + pxd_index * 8;
+        if (!pxd_entry_va) return 0;
+        uint64_t pxd_desc = *((uint64_t *)pxd_entry_va);
+        if ((pxd_desc & 0b11) == 0b11) {
+            pxd_pa = pxd_desc & (((1ul << (48 - page_shift_t)) - 1) << page_shift_t);
+        } else if ((pxd_desc & 0b11) == 0b01) {
+            uint64_t block_bits = (3 - lv) * pxd_bits + page_shift_t;
+            pxd_pa = pxd_desc & (((1ul << (48 - block_bits)) - 1) << block_bits);
+            block_lv = lv;
+        } else {
+            return 0;
+        }
+        pxd_va = (uint64_t)phys_to_virt((phys_addr_t)pxd_pa);
+        if (block_lv) {
+            break;
+        }
+    }
+    return (uint64_t *)pxd_entry_va;
+}
 
-long handle_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
+inline uint64_t *pgtable_entry_kernel(uint64_t va)
+{
+    return pgtable_entry(pgd_k, va);
+}
+
+long handle_ioctl(unsigned int fd, unsigned int const cmd, unsigned long const arg)
 {
     static COPY_MEMORY cm;
     static MODULE_BASE mb;
     static char name[0x100] = {0};
-    long ret = 0;
+
+    THOOK_LOG("handle_ioctl: fd=%u, cmd=0x%x, arg=0x%lx\n", fd, cmd, arg);
 
     switch (cmd) {
-    case OP_READ_MEM:
-        if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
-            THOOK_LOG("copy_from_user OP_READ_MEM failed\n");
-            ret = -1; break;
-        }
-        if (!read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size)) {
-            THOOK_LOG("read_process_memory failed\n");
-            ret = -1;
-        }
-        break;
-    case OP_WRITE_MEM:
-        if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
-            THOOK_LOG("copy_from_user OP_WRITE_MEM failed\n");
-            ret = -1; break;
-        }
-        if (!write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size)) {
-            THOOK_LOG("write_process_memory failed\n");
-            ret = -1;
-        }
-        break;
-    case OP_MODULE_BASE:
-        if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 ||
-            copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) != 0) {
-            THOOK_LOG("copy_from_user OP_MODULE_BASE failed\n");
-            ret = -1; break;
-        }
-        mb.base = get_module_base(mb.pid, name);
-        if (copy_to_user((void __user*)arg, &mb, sizeof(mb)) != 0) {
-            THOOK_LOG("copy_to_user OP_MODULE_BASE failed\n");
-            ret = -1;
-        }
-        break;
-    default:
-        THOOK_LOG("Unknown ioctl cmd: 0x%x\n", cmd);
-        break;
+        case OP_READ_MEM:
+            if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
+                THOOK_LOG("copy_from_user OP_READ_MEM failed\n");
+                return -1;
+            }
+            if (read_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
+                THOOK_LOG("read_process_memory failed\n");
+                return -1;
+            }
+            break;
+        case OP_WRITE_MEM:
+            if (copy_from_user(&cm, (void __user*)arg, sizeof(cm)) != 0) {
+                THOOK_LOG("copy_from_user OP_WRITE_MEM failed\n");
+                return -1;
+            }
+            if (write_process_memory(cm.pid, cm.addr, cm.buffer, cm.size) == false) {
+                THOOK_LOG("write_process_memory failed\n");
+                return -1;
+            }
+            break;
+        case OP_MODULE_BASE:
+            if (copy_from_user(&mb, (void __user*)arg, sizeof(mb)) != 0 
+                || copy_from_user(name, (void __user*)mb.name, sizeof(name)-1) !=0) {
+                THOOK_LOG("copy_from_user OP_MODULE_BASE failed\n");
+                return -1;
+            }
+            mb.base = get_module_base(mb.pid, name);
+            if (copy_to_user((void __user*)arg, &mb, sizeof(mb)) !=0) {
+                THOOK_LOG("copy_to_user OP_MODULE_BASE failed\n");
+                return -1;
+            }
+            break;
+        default:
+            THOOK_LOG("Unknown ioctl cmd: 0x%x\n", cmd);
+            break;
     }
-    THOOK_LOG("ioctl: fd=%u cmd=0x%x arg=0x%lx ret=%ld\n", fd, cmd, arg, ret);
-    return ret;
-}
-
-long new_hook_ioctl(const struct pt_regs *regs)
-{
-    unsigned int fd = (unsigned int)regs->regs[0];
-    unsigned int cmd = (unsigned int)regs->regs[1];
-    unsigned long arg = (unsigned long)regs->regs[2];
-    if (fd == (unsigned int)-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE) {
-        THOOK_LOG("new_hook_ioctl intercepted: fd=%u cmd=0x%x arg=0x%lx\n", fd, cmd, arg);
-        return handle_ioctl(fd, cmd, arg);
-    }
-    return original_ioctl(regs);
-}
-
-// --------- 模块加载/卸载 ---------
-static int __init my_module_init(void)
-{
-    unsigned long syscall_table_addr = read_kallsyms("sys_call_table");
-    if (!syscall_table_addr) {
-        THOOK_LOG("sys_call_table not found, abort\n");
-        return -1;
-    }
-    __sys_call_table = (unsigned long *)syscall_table_addr;
-    original_ioctl = (sys_ioctl_t)__sys_call_table[__NR_ioctl];
-
-    THOOK_LOG("sys_call_table at %px\n", __sys_call_table);
-    THOOK_LOG("original_ioctl: %px\n", original_ioctl);
-
-    set_table_rw((uint64_t)__sys_call_table);
-    __sys_call_table[__NR_ioctl] = (unsigned long)new_hook_ioctl;
-    set_table_ro((uint64_t)__sys_call_table);
-
-    THOOK_LOG("Hooked ioctl\n");
     return 0;
 }
 
-static void __exit my_module_exit(void)
+long new_hook_ioctl(const struct pt_regs *kregs)
 {
-    if (__sys_call_table && original_ioctl) {
-        set_table_rw((uint64_t)__sys_call_table);
-        __sys_call_table[__NR_ioctl] = (unsigned long)original_ioctl;
-        set_table_ro((uint64_t)__sys_call_table);
-        THOOK_LOG("Restored ioctl\n");
+    long ret = 0;
+    unsigned int fd = (unsigned int)kregs->regs[0];
+    unsigned int cmd = (unsigned int)kregs->regs[1];
+    unsigned long arg = (unsigned long)kregs->regs[2];
+    THOOK_LOG("new_hook_ioctl: fd=%u, cmd=0x%x, arg=0x%lx\n", fd, cmd, arg);
+
+    if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
+        ret = handle_ioctl(fd, cmd, arg);
+    else
+        ret = new_original_ioctl(kregs);
+
+    THOOK_LOG("new_hook_ioctl ret: %ld\n", ret);
+    return ret;
+}
+
+asmlinkage long hook_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
+{
+    long ret = 0;
+    THOOK_LOG("hook_ioctl: fd=%u, cmd=0x%x, arg=0x%lx\n", fd, cmd, arg);
+
+    if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
+        ret = handle_ioctl(fd, cmd, arg);
+    else
+        ret = original_ioctl(fd, cmd, arg);
+
+    THOOK_LOG("hook_ioctl ret: %ld\n", ret);
+    return ret;
+}
+
+static int hook_func(unsigned long hook_function, int nr,
+        unsigned long *sys_table)
+{
+    uint64_t orginal_pte;
+    uint64_t *pte;
+    THOOK_LOG("hook_func: hook_function=0x%lx, nr=%d, sys_table=%px\n", hook_function, nr, sys_table);
+
+    if(nr<0) {
+        THOOK_LOG("hook_func: invalid nr=%d\n", nr);
+        return 3004;
     }
-    THOOK_LOG("exit\n");
+
+    pte = pgtable_entry_kernel((uint64_t)&sys_table[nr]);
+    if(pte == NULL) {
+        THOOK_LOG("hook_func: failed to get pte\n");
+        return 3007;
+    }
+
+    orginal_pte = *pte;
+    *pte = (orginal_pte | PTE_DBM) & ~PTE_RDONLY;
+    flush_tlb_all();
+
+    sys_table[nr] = hook_function;
+
+    *pte = orginal_pte;
+    flush_tlb_all();
+
+    THOOK_LOG("hook_func finished\n");
+    return 0;
+}
+
+static int __init my_module_init(void) {
+
+    THOOK_LOG("init_page_util...\n");
+    init_page_util();
+
+    // 获取 sys_call_table
+    THOOK_LOG("read_kallsyms(sys_call_table)...\n");
+    __sys_call_table = (unsigned long *)read_kallsyms("sys_call_table");
+    if (!__sys_call_table) {
+        THOOK_LOG("Cannot find sys_call_table!\n");
+        return -1;
+    }
+
+    #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 14, 186)
+        THOOK_LOG("hook_func hook_ioctl (__NR_ioctl)...\n");
+        hook_func((unsigned long)hook_ioctl, __NR_ioctl, __sys_call_table);
+    #else
+        THOOK_LOG("hook_func new_hook_ioctl (__NR_ioctl)...\n");
+        hook_func((unsigned long)new_hook_ioctl, __NR_ioctl, __sys_call_table);
+    #endif
+    
+    if (!IS_ERR(filp_open("/proc/sched_debug", O_RDONLY, 0))) {
+        THOOK_LOG("removing /proc/sched_debug\n");
+        remove_proc_subtree("sched_debug", NULL);
+    }
+    if (!IS_ERR(filp_open("/proc/uevents_records", O_RDONLY, 0))) {
+        THOOK_LOG("removing /proc/uevents_records\n");
+        remove_proc_entry("uevents_records", NULL);
+    }
+
+    // === 注释隐藏模块代码，方便调试/卸载 ===
+    // list_del(&THIS_MODULE->list);
+    // kobject_del(&THIS_MODULE->mkobj.kobj);
+    // list_del(&THIS_MODULE->mkobj.kobj.entry);
+
+    THOOK_LOG("init finish!\n");
+    return 0;
+}
+
+static void __exit my_module_exit(void) {
+    #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 14, 191)
+        THOOK_LOG("restore original_ioctl (__NR_ioctl)...\n");
+        hook_func((unsigned long)original_ioctl, __NR_ioctl, __sys_call_table);
+    #else
+        THOOK_LOG("restore new_original_ioctl (__NR_ioctl)...\n");
+        hook_func((unsigned long)new_original_ioctl, __NR_ioctl, __sys_call_table);
+    #endif
+    THOOK_LOG("exit finish!\n");
 }
 
 module_init(my_module_init);
 module_exit(my_module_exit);
 
 MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Custom syscall module without kprobes");
 MODULE_AUTHOR("万载");
-MODULE_DESCRIPTION("ARM64 syscall table hook with [Thook] dmesg log (no hide)");
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
-MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+    MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver); 
 #endif
