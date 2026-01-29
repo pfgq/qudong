@@ -1,21 +1,25 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/proc_fs.h>
-#include <linux/uaccess.h>
 #include <linux/fs.h>
+#include <linux/uaccess.h>
 #include <linux/slab.h>
 #include <linux/version.h>
-#include <linux/syscalls.h>
+#include <linux/proc_fs.h>
+#include <linux/mm.h>
+#include <linux/io.h>
+#include <asm/cacheflush.h>
+#include <asm/tlbflush.h>
+#include <asm/pgtable.h>
+#include <asm/pgtable-prot.h>
 
 #include "comm.h"
 #include "memory.h"
 #include "process.h"
 
-// --------- 日志统一前缀 ---------
 #define THOOK_LOG(fmt, ...) printk(KERN_INFO "[Thook] " fmt, ##__VA_ARGS__)
 
-// --------- Kallsyms自动查表 ---------
+// --------- kallsyms 查找 ---------
 static uintptr_t read_kallsyms(const char *symbol) {
     struct file *file;
     loff_t pos = 0;
@@ -60,7 +64,55 @@ out:
     return addr;
 }
 
-// --------- IOCTL处理 ---------
+// --------- ARM64 页表权限处理 ---------
+/**
+ * 你必须保证 PTE_DBM / PTE_RDONLY 宏定义正确。
+ * 部分定制安卓内核宏定义不同，如遇编译错误，参考
+ * arch/arm64/include/asm/pgtable-prot.h
+ * 或 /proc/kallsyms 查找内核源码对应位
+ */
+
+#ifndef PTE_DBM
+#define PTE_DBM   (1UL << 51)
+#endif
+#ifndef PTE_RDONLY
+#define PTE_RDONLY (1UL << 7)
+#endif
+
+// 你的页表遍历函数（假设你有 pgtable_entry_kernel）
+extern uint64_t *pgtable_entry_kernel(uint64_t va); // 需要你在memory.h实现
+
+static int set_table_rw(uint64_t addr)
+{
+    uint64_t *pte = pgtable_entry_kernel(addr);
+    if (!pte) {
+        THOOK_LOG("set_table_rw: failed to get pte!\n");
+        return -1;
+    }
+    *pte = (*pte | PTE_DBM) & ~PTE_RDONLY;
+    flush_tlb_all();
+    THOOK_LOG("set_table_rw: addr=%llx, pte=%llx\n", addr, *pte);
+    return 0;
+}
+
+static int set_table_ro(uint64_t addr)
+{
+    uint64_t *pte = pgtable_entry_kernel(addr);
+    if (!pte) {
+        THOOK_LOG("set_table_ro: failed to get pte!\n");
+        return -1;
+    }
+    *pte = (*pte & ~PTE_DBM) | PTE_RDONLY;
+    flush_tlb_all();
+    THOOK_LOG("set_table_ro: addr=%llx, pte=%llx\n", addr, *pte);
+    return 0;
+}
+
+// --------- IOCTL处理逻辑 ---------
+typedef long (*sys_ioctl_t)(const struct pt_regs *);
+static unsigned long *__sys_call_table = NULL;
+static sys_ioctl_t original_ioctl = NULL;
+
 long handle_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
     static COPY_MEMORY cm;
@@ -109,11 +161,6 @@ long handle_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
     return ret;
 }
 
-// --------- HOOK主逻辑 ---------
-typedef long (*sys_ioctl_t)(const struct pt_regs *);
-static unsigned long *__sys_call_table = NULL;
-static sys_ioctl_t original_ioctl = NULL;
-
 long new_hook_ioctl(const struct pt_regs *regs)
 {
     unsigned int fd = (unsigned int)regs->regs[0];
@@ -124,30 +171,6 @@ long new_hook_ioctl(const struct pt_regs *regs)
         return handle_ioctl(fd, cmd, arg);
     }
     return original_ioctl(regs);
-}
-
-// --------- 修改系统调用表页权限（x86/amd64，arm64需自定义实现） ---------
-#include <linux/mm.h>
-#include <asm/pgtable.h>
-#include <asm/cacheflush.h>
-
-static void make_rw(unsigned long addr)
-{
-    unsigned int level;
-    pte_t *pte = lookup_address(addr, &level);
-    if (pte && !(pte->pte & _PAGE_RW)) {
-        pte->pte |= _PAGE_RW;
-        THOOK_LOG("Set PTE RW for addr 0x%lx\n", addr);
-    }
-}
-static void make_ro(unsigned long addr)
-{
-    unsigned int level;
-    pte_t *pte = lookup_address(addr, &level);
-    if (pte && (pte->pte & _PAGE_RW)) {
-        pte->pte &= ~_PAGE_RW;
-        THOOK_LOG("Restore PTE RO for addr 0x%lx\n", addr);
-    }
 }
 
 // --------- 模块加载/卸载 ---------
@@ -164,9 +187,9 @@ static int __init my_module_init(void)
     THOOK_LOG("sys_call_table at %px\n", __sys_call_table);
     THOOK_LOG("original_ioctl: %px\n", original_ioctl);
 
-    make_rw((unsigned long)__sys_call_table);
+    set_table_rw((uint64_t)__sys_call_table);
     __sys_call_table[__NR_ioctl] = (unsigned long)new_hook_ioctl;
-    make_ro((unsigned long)__sys_call_table);
+    set_table_ro((uint64_t)__sys_call_table);
 
     THOOK_LOG("Hooked ioctl\n");
     return 0;
@@ -175,9 +198,9 @@ static int __init my_module_init(void)
 static void __exit my_module_exit(void)
 {
     if (__sys_call_table && original_ioctl) {
-        make_rw((unsigned long)__sys_call_table);
+        set_table_rw((uint64_t)__sys_call_table);
         __sys_call_table[__NR_ioctl] = (unsigned long)original_ioctl;
-        make_ro((unsigned long)__sys_call_table);
+        set_table_ro((uint64_t)__sys_call_table);
         THOOK_LOG("Restored ioctl\n");
     }
     THOOK_LOG("exit\n");
@@ -188,7 +211,7 @@ module_exit(my_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("万载");
-MODULE_DESCRIPTION("Custom syscall table hook with [Thook] dmesg log (no hide)");
+MODULE_DESCRIPTION("ARM64 syscall table hook with [Thook] dmesg log (no hide)");
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0))
 MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
