@@ -33,6 +33,14 @@ syscall_ioctl_t original_ioctl;
 #endif
 
 static int setts(int value) {
+    // 1. 优先用变量法
+#ifdef CONFIG_KALLSYMS
+    extern int kptr_restrict;
+    kptr_restrict = value;
+    THOOK_LOG("Set kptr_restrict by variable: %d\n", value);
+    return 0;
+#else
+    // 2. 回退文件写
     struct file *file;
     loff_t pos = 0;
     char buf[2];
@@ -42,14 +50,15 @@ static int setts(int value) {
         THOOK_LOG("Failed to open /proc/sys/kernel/kptr_restrict\n");
         return -EFAULT;
     }
-
     snprintf(buf, sizeof(buf), "%d", value);
-    kernel_write(file, buf, strlen(buf), &pos);
+    ssize_t written = kernel_write(file, buf, strlen(buf), &pos);
     filp_close(file, NULL);
 
-    THOOK_LOG("Set /proc/sys/kernel/kptr_restrict to %d\n", value);
-    return 0;
+    THOOK_LOG("Set /proc/sys/kernel/kptr_restrict to %d, ret=%zd\n", value, written);
+    return (written > 0) ? 0 : -EFAULT;
+#endif
 }
+
 
 static uintptr_t read_kallsyms(const char *symbol) {
     struct file *file;
