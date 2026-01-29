@@ -300,24 +300,26 @@ static int hook_func(unsigned long hook_function, int nr,
 {
     uint64_t orginal_pte;
     uint64_t *pte;
-    if(nr<0)
+
+    if (nr < 0)
         return 3004;
 
     pte = pgtable_entry_kernel((uint64_t)&sys_table[nr]);
-    if(pte == NULL)
+    if (pte == NULL)
         return 3007;
-    
-    
+
     orginal_pte = *pte;
     *pte = (orginal_pte | PTE_DBM) & ~PTE_RDONLY;
     flush_tlb_all();
-    
+
     sys_table[nr] = hook_function;
-    
-    //orginal_pte = *pte;
+
     *pte = orginal_pte;
     flush_tlb_all();
+
+    return 0;
 }
+
 
 static int __init my_module_init(void) {
 
