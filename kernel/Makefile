@@ -1,3 +1,2 @@
-﻿obj-m += entry.o
-ccflags-y += -Wno-error
--std=gnu89
+﻿obj-y += main.o
+ccflags-y += -Wno-error -std=gnu89
