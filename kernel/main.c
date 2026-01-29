@@ -10,6 +10,7 @@
 #include <linux/syscalls.h>
 #include <asm/tlbflush.h>
 #include <linux/version.h>
+#include <linux/capability.h>
 
 #include "comm.h"
 #include "memory.h"
@@ -216,11 +217,26 @@ inline uint64_t *pgtable_entry_kernel(uint64_t va)
     return pgtable_entry(pgd_k, va);
 }
 
+static inline int thook_permission_check(void)
+{
+    // 只允许 root（CAP_SYS_ADMIN）
+    if (!capable(CAP_SYS_ADMIN)) {
+        return -EPERM;
+    }
+    return 0;
+}
 long handle_ioctl(unsigned int fd, unsigned int const cmd, unsigned long const arg)
 {
+    int perm_ret;
     static COPY_MEMORY cm;
     static MODULE_BASE mb;
     static char name[0x100] = {0};
+    perm_ret = thook_permission_check();
+    if (perm_ret) {
+        THOOK_LOG("Permission denied: uid=%d cmd=0x%x\n",
+              __kuid_val(current_uid()), cmd);
+    return perm_ret;
+}
 
     THOOK_LOG("handle_ioctl: fd=%u, cmd=0x%x, arg=0x%lx\n", fd, cmd, arg);
 
