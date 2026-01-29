@@ -1,7 +1,7 @@
 MODULE_NAME := Thook
 RESMAN_CORE_OBJS:=main.o
-ccflags-y += -Wno-error -std=gnu99
 RESMAN_GLUE_OBJS:=
+ccflags-y += -Wno-error -std=gnu89
 ifneq ($(KERNELRELEASE),)
 	obj-m := $(MODULE_NAME).o
 	$(MODULE_NAME)-objs:=$(RESMAN_GLUE_OBJS) $(RESMAN_CORE_OBJS)
