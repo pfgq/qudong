@@ -13,7 +13,7 @@
 #include <linux/uaccess.h>
 #include <linux/kernel.h>
 #include <linux/version.h>
-#include <linux/proc_fs.h>
+
 #include "api_proxy.h"
 #include "phy_mem.h"
 #include "proc_maps.h"
@@ -28,10 +28,7 @@
 #include "hide_procfs_dir.h"
 #endif
 //////////////////////////////////////////////////////////////////
-static const struct file_operations rwProcMem_proc_ops = {
-    .owner = THIS_MODULE,
-    .read  = rwProcMem_read,
-};
+
 enum {
 	CMD_INIT_DEVICE_INFO = 1, 		// 初始化设备信息
 	CMD_OPEN_PROCESS, 				// 打开进程
@@ -59,7 +56,9 @@ struct rwProcMemDev {
 };
 static struct rwProcMemDev *g_rwProcMem_devp;
 
-// rwProcMem_module.h
 static ssize_t rwProcMem_read(struct file* filp, char __user* buf, size_t size, loff_t* ppos);
+static const struct proc_ops rwProcMem_proc_ops = {
+    .proc_read    = rwProcMem_read,
+};
 
 #endif /* RWPROCMEM_H_ */
