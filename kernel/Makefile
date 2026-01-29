@@ -1,3 +1,3 @@
-﻿obj-m += rwProcMem_module.o
+﻿obj-m += entry.o
 ccflags-y += -Wno-error
 -std=gnu89
