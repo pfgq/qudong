@@ -277,7 +277,6 @@ long new_hook_ioctl(const struct pt_regs *kregs)
         ret = new_original_ioctl(kregs);
     }
 
-    THOOK_LOG("new_hook_ioctl ret: %ld\n", ret);
     return ret;
 }
 
@@ -285,14 +284,13 @@ long new_hook_ioctl(const struct pt_regs *kregs)
 asmlinkage long hook_ioctl(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
     long ret = 0;
-    THOOK_LOG("hook_ioctl: fd=%u, cmd=0x%x, arg=0x%lx\n", fd, cmd, arg);
+    
 
     if (fd==-1 && cmd >= OP_INIT_KEY && cmd <= OP_MODULE_BASE)
         ret = handle_ioctl(fd, cmd, arg);
     else
         ret = original_ioctl(fd, cmd, arg);
 
-    THOOK_LOG("hook_ioctl ret: %ld\n", ret);
     return ret;
 }
 
