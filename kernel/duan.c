@@ -3,25 +3,17 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("test");
-MODULE_DESCRIPTION("KernelSU lookup symbol test");
+MODULE_DESCRIPTION("KernelSU lookup test");
 
-/*
- * KernelSU 在内核中导出的符号
- * 不需要头文件，直接 extern
- */
+/* KernelSU 导出的符号 */
 extern unsigned long ksu_lookup_name(const char *name);
 
 static int __init ksu_test_init(void)
 {
-    unsigned long addr1 = 0;
-    unsigned long addr2 = 0;
+    unsigned long addr1;
+    unsigned long addr2;
 
     printk(KERN_ERR "[ksu_test] init\n");
-
-    if (!ksu_lookup_name) {
-        printk(KERN_ERR "[ksu_test] ksu_lookup_name symbol not found\n");
-        return -EINVAL;
-    }
 
     addr1 = ksu_lookup_name("kallsyms_lookup_name");
     addr2 = ksu_lookup_name("sys_call_table");

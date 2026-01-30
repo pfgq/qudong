@@ -1,42 +1,49 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/kprobes.h>
 
-static unsigned long kallsyms_lookup_name_addr = 0;
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("test");
+MODULE_DESCRIPTION("KernelSU lookup symbol test");
 
-static struct kprobe kp = {
-    .symbol_name = "kallsyms_lookup_name",
-};
+/*
+ * KernelSU 在内核中导出的符号
+ * 不需要头文件，直接 extern
+ */
+extern unsigned long ksu_lookup_name(const char *name);
 
-static int __init get_kallsyms_init(void)
+static int __init ksu_test_init(void)
 {
-    int ret;
+    unsigned long addr1 = 0;
+    unsigned long addr2 = 0;
 
-    printk(KERN_ERR "[duan] get_kallsyms_init enter\n");
+    printk(KERN_ERR "[ksu_test] init\n");
 
-    ret = register_kprobe(&kp);
-    if (ret < 0) {
-        printk(KERN_ERR "[duan] register_kprobe failed, ret=%d\n", ret);
-        return ret;
+    if (!ksu_lookup_name) {
+        printk(KERN_ERR "[ksu_test] ksu_lookup_name symbol not found\n");
+        return -EINVAL;
     }
 
-    kallsyms_lookup_name_addr = (unsigned long)kp.addr;
-    printk(KERN_ERR "[duan] kallsyms_lookup_name addr = 0x%lx\n",
-           kallsyms_lookup_name_addr);
+    addr1 = ksu_lookup_name("kallsyms_lookup_name");
+    addr2 = ksu_lookup_name("sys_call_table");
 
-    unregister_kprobe(&kp);
+    printk(KERN_ERR "[ksu_test] kallsyms_lookup_name = %px\n",
+           (void *)addr1);
+    printk(KERN_ERR "[ksu_test] sys_call_table        = %px\n",
+           (void *)addr2);
 
+    if (!addr1 || !addr2) {
+        printk(KERN_ERR "[ksu_test] lookup failed\n");
+        return -EINVAL;
+    }
+
+    printk(KERN_ERR "[ksu_test] lookup success\n");
     return 0;
 }
 
-static void __exit get_kallsyms_exit(void)
+static void __exit ksu_test_exit(void)
 {
-    printk(KERN_ERR "[duan] get_kallsyms_exit\n");
+    printk(KERN_ERR "[ksu_test] exit\n");
 }
 
-module_init(get_kallsyms_init);
-module_exit(get_kallsyms_exit);
-
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("duan");
-MODULE_DESCRIPTION("get kallsyms_lookup_name address via kprobe");
+module_init(ksu_test_init);
+module_exit(ksu_test_exit);
