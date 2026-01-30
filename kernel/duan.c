@@ -3,20 +3,29 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("test");
-MODULE_DESCRIPTION("KernelSU lookup test");
+MODULE_DESCRIPTION("KernelSU ksu_ops lookup test");
 
-/* KernelSU 导出的符号 */
-extern unsigned long ksu_lookup_name(const char *name);
+/* KernelSU ops */
+struct ksu_ops {
+    unsigned long (*lookup_symbol)(const char *name);
+};
+
+extern struct ksu_ops *ksu_ops;
 
 static int __init ksu_test_init(void)
 {
-    unsigned long addr1;
-    unsigned long addr2;
+    unsigned long addr1 = 0;
+    unsigned long addr2 = 0;
 
     printk(KERN_ERR "[ksu_test] init\n");
 
-    addr1 = ksu_lookup_name("kallsyms_lookup_name");
-    addr2 = ksu_lookup_name("sys_call_table");
+    if (!ksu_ops || !ksu_ops->lookup_symbol) {
+        printk(KERN_ERR "[ksu_test] ksu_ops not available\n");
+        return -EINVAL;
+    }
+
+    addr1 = ksu_ops->lookup_symbol("kallsyms_lookup_name");
+    addr2 = ksu_ops->lookup_symbol("sys_call_table");
 
     printk(KERN_ERR "[ksu_test] kallsyms_lookup_name = %px\n",
            (void *)addr1);
