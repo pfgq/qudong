@@ -1,1 +1,1 @@
-obj-m += hwBreakpointProc_module.o
+obj-m += duan.o
