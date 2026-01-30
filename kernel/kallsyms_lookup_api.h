@@ -75,7 +75,7 @@ out:
 }
 
 
-static unsigned long generic_kallsyms_lookup_name(const char *name)
+static unsigned long __maybe_unused generic_kallsyms_lookup_name(const char *name)
 {
     if (!kallsyms_lookup_name_sym) {
         kallsyms_lookup_name_sym = (void *)find_sym_in_kallsyms("kallsyms_lookup_name");

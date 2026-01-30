@@ -86,6 +86,7 @@ static unsigned long generic_kallsyms_lookup_name(const char *name)
     return kallsyms_lookup_name_sym(name);
 }
 
+#if 0
 static bool init_kallsyms_lookup(void)
 {
     register_user_hw_breakpoint_sym = (void *)generic_kallsyms_lookup_name("register_user_hw_breakpoint");
@@ -104,5 +105,5 @@ static bool init_kallsyms_lookup(void)
 
     return true;
 }
-
+#endif
 #endif
