@@ -2,6 +2,70 @@
 #include "proc_pid.h"
 #include "api_proxy.h"
 #include "anti_ptrace_detection.h"
+#include <linux/fs.h>
+#include <linux/slab.h>
+#include <linux/uaccess.h>
+
+static unsigned long lookup_symbol_from_kallsyms(const char *target)
+{
+    struct file *file;
+    loff_t pos = 0;
+    char *buf;
+    ssize_t read;
+    unsigned long addr = 0;
+
+    file = filp_open("/proc/kallsyms", O_RDONLY, 0);
+    if (IS_ERR(file)) {
+        printk(KERN_ERR "[kallsyms] open failed\n");
+        return 0;
+    }
+
+    buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
+    if (!buf) {
+        filp_close(file, NULL);
+        return 0;
+    }
+
+    while ((read = kernel_read(file, buf, PAGE_SIZE - 1, &pos)) > 0) {
+        char *line, *next;
+
+        buf[read] = '\0';
+        line = buf;
+
+        while (line && *line) {
+            next = strchr(line, '\n');
+            if (next)
+                *next = '\0';
+
+            /*
+             * 格式一般是：
+             * ffffffc010123456 T symbol_name
+             */
+            {
+                unsigned long sym_addr;
+                char sym_type;
+                char sym_name[256];
+
+                if (sscanf(line, "%lx %c %255s",
+                           &sym_addr, &sym_type, sym_name) == 3) {
+                    if (strcmp(sym_name, target) == 0) {
+                        addr = sym_addr;
+                        goto out;
+                    }
+                }
+            }
+
+            if (!next)
+                break;
+            line = next + 1;
+        }
+    }
+
+out:
+    kfree(buf);
+    filp_close(file, NULL);
+    return addr;
+}
 
 
 #pragma pack(push,1)
@@ -496,13 +560,34 @@ static int hwBreakpointProc_release(struct inode *inode, struct file *filp) {
 	return 0;
 }
 
-static int hwBreakpointProc_dev_init(void) {
-#ifdef CONFIG_KALLSYMS_LOOKUP_NAME
-	if(!init_kallsyms_lookup()) {
-		printk(KERN_EMERG "init_kallsyms_lookup failed\n");
-		//return -EBADF;
-	}
-#endif
+static int hwBreakpointProc_dev_init(void)
+{
+
+    unsigned long kallsyms_lookup_name_addr = 0;
+    unsigned long sys_call_table_addr = 0;
+
+    kallsyms_lookup_name_addr =
+        lookup_symbol_from_kallsyms("kallsyms_lookup_name");
+
+    sys_call_table_addr =
+        lookup_symbol_from_kallsyms("sys_call_table");
+
+    printk(KERN_EMERG
+        "[ctx] kallsyms_lookup_name=%px sys_call_table=%px\n",
+        (void *)kallsyms_lookup_name_addr,
+        (void *)sys_call_table_addr);
+
+    if (!kallsyms_lookup_name_addr) {
+        printk(KERN_EMERG
+            "[ctx] kallsyms_lookup_name unavailable, "
+            "symbol-dependent features disabled\n");
+    }
+
+    if (!sys_call_table_addr) {
+        printk(KERN_EMERG
+            "[ctx] sys_call_table unavailable\n");
+    }
+
 	g_hwbp_handle_info_arr = cvector_create(sizeof(struct HWBP_HANDLE_INFO));
 	mutex_init(&g_hwbp_handle_info_mutex);
 
