@@ -32,6 +32,12 @@ static unsigned long find_sym_in_kallsyms(const char *name)
     char *buf = NULL;
     ssize_t len;
     unsigned long addr = 0;
+    loff_t pos = 0;     // <-- 移到最前面
+    char *cur;          // <-- 提前声明
+    char *line;         // <-- 提前声明
+    unsigned long t_addr;
+    char t_type;
+    char t_name[KSYM_NAME_LEN];
 
     buf = kmalloc(PAGE_SIZE, GFP_KERNEL);
     if (!buf)
@@ -47,16 +53,11 @@ static unsigned long find_sym_in_kallsyms(const char *name)
         return 0;
     }
 
-    loff_t pos = 0;
     while ((len = kernel_read(f, buf, PAGE_SIZE - 1, &pos)) > 0) {
         buf[len] = '\0';
-        char *cur = buf;
-        char *line;
+        cur = buf;
         while ((line = strsep(&cur, "\n")) != NULL) {
             if (strstr(line, name)) {
-                unsigned long t_addr = 0;
-                char t_type;
-                char t_name[KSYM_NAME_LEN];
                 if (sscanf(line, "%lx %c %s", &t_addr, &t_type, t_name) == 3) {
                     if (strcmp(t_name, name) == 0) {
                         addr = t_addr;
@@ -72,6 +73,7 @@ out:
     kfree(buf);
     return addr;
 }
+
 
 static unsigned long generic_kallsyms_lookup_name(const char *name)
 {
