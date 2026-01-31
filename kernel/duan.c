@@ -8,9 +8,9 @@
 #include <asm/ptrace.h>
 
 /* ================= 固定参数 ================= */
-#define HWHOOK_TARGET_PID   12366
-#define HWHOOK_BP_ADDR      0x63d167a880UL
-#define HWHOOK_NEW_X0       0x63d167a000UL
+#define HWHOOK_TARGET_PID   13040
+#define HWHOOK_BP_ADDR      0x55b9cf2880UL
+#define HWHOOK_NEW_X0       0x7Fc178fc24UL
 
 /* ================= 全局状态 ================= */
 static struct perf_event *g_hwbp;
