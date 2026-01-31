@@ -92,15 +92,19 @@ static int install_rw_watch(void)
 {
     struct perf_event_attr attr;
     int hw_len;
+    unsigned long aligned_addr;
 
     hw_len = convert_bp_len(g_req.bp_len);
     if (hw_len < 0)
         return -EINVAL;
 
+    /* 🔥 核心：地址按长度对齐 */
+    aligned_addr = g_req.addr & ~(g_req.bp_len - 1);
+
     hw_breakpoint_init(&attr);
     attr.type    = PERF_TYPE_BREAKPOINT;
     attr.bp_type = HW_BREAKPOINT_R | HW_BREAKPOINT_W;
-    attr.bp_addr = g_req.addr;
+    attr.bp_addr = aligned_addr;
     attr.bp_len  = hw_len;
 
     g_event = perf_event_create_kernel_counter(
@@ -116,10 +120,12 @@ static int install_rw_watch(void)
         return -EINVAL;
     }
 
-    pr_info("[perf-rw] installed pid=%d addr=%lx len=%u\n",
-            g_req.pid, g_req.addr, g_req.bp_len);
+    pr_info("[perf-rw] installed pid=%d addr=%lx aligned=%lx len=%u\n",
+            g_req.pid, g_req.addr, aligned_addr, g_req.bp_len);
+
     return 0;
 }
+
 
 /* ioctl */
 static long perf_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
