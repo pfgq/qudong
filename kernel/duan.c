@@ -7,11 +7,12 @@
 #include <linux/hw_breakpoint.h>
 #include <asm/ptrace.h>
 
-/* ================== 固定参数 ================== */
-#define HWHOOK_TARGET_PID   11255
-#define HWHOOK_BP_ADDR      0x5a5b485880UL
+/* ================= 固定参数 ================= */
+#define HWHOOK_TARGET_PID   12366
+#define HWHOOK_BP_ADDR      0x63d167a880UL
+#define HWHOOK_NEW_X0       0x63d167a000UL
 
-/* ================== 全局状态 ================== */
+/* ================= 全局状态 ================= */
 static struct perf_event *g_hwbp;
 static struct task_struct *g_task;
 
@@ -23,29 +24,33 @@ static struct perf_event_attr g_next_attr;
 /* 是否处于第二次命中 */
 static bool g_on_next_hit = false;
 
-/* ================== HWBP 回调 ================== */
+/* ================= HWBP 回调 ================= */
 static void hwhook_handler(struct perf_event *bp,
                            struct perf_sample_data *data,
                            struct pt_regs *regs)
 {
     unsigned long pc;
-    unsigned long x0;
+    unsigned long old_x0;
 
     if (!regs)
         return;
 
     pc = regs->pc;
-    x0 = regs->regs[0];
+    old_x0 = regs->regs[0];
 
     if (!g_on_next_hit) {
-        /* ========== 第一次命中 ========== */
+        /* ===== 第一次命中 ===== */
         printk(KERN_INFO
-               "[hwhook] HIT1 pid=%d pc=0x%lx x0=0x%lx\n",
-               HWHOOK_TARGET_PID, pc, x0);
+               "[hwhook] HIT1 pid=%d pc=0x%lx x0=0x%lx -> 0x%lx\n",
+               HWHOOK_TARGET_PID, pc, old_x0, HWHOOK_NEW_X0);
+
+        /* ===== 核心：强制覆盖 x0 ===== */
+        regs->regs[0] = HWHOOK_NEW_X0;
 
         /*
+         * 双命中处理：
          * 将断点临时移动到下一条指令
-         * ARM64 指令长度固定为 4 字节
+         * ARM64 指令长度固定 4 字节
          */
         memcpy(&g_next_attr, &g_orig_attr,
                sizeof(struct perf_event_attr));
@@ -59,7 +64,7 @@ static void hwhook_handler(struct perf_event *bp,
                    "[hwhook] modify_user_hw_breakpoint(next) failed\n");
         }
     } else {
-        /* ========== 第二次命中 ========== */
+        /* ===== 第二次命中 ===== */
         printk(KERN_INFO
                "[hwhook] HIT2 pc=0x%lx restore original bp\n",
                pc);
@@ -69,7 +74,7 @@ static void hwhook_handler(struct perf_event *bp,
     }
 }
 
-/* ================== 安装断点 ================== */
+/* ================= 安装硬件断点 ================= */
 static int hwhook_install_bp(void)
 {
     struct pid *pid_struct;
@@ -97,7 +102,8 @@ static int hwhook_install_bp(void)
                                          NULL,
                                          g_task);
     if (IS_ERR(g_hwbp)) {
-        printk(KERN_ERR "[hwhook] register_user_hw_breakpoint failed\n");
+        printk(KERN_ERR
+               "[hwhook] register_user_hw_breakpoint failed\n");
         return PTR_ERR(g_hwbp);
     }
 
@@ -108,7 +114,7 @@ static int hwhook_install_bp(void)
     return 0;
 }
 
-/* ================== 卸载断点 ================== */
+/* ================= 卸载硬件断点 ================= */
 static void hwhook_uninstall_bp(void)
 {
     if (g_hwbp) {
@@ -118,7 +124,7 @@ static void hwhook_uninstall_bp(void)
     }
 }
 
-/* ================== 模块入口 / 退出 ================== */
+/* ================= 模块入口 / 退出 ================= */
 static int __init hwhook_init(void)
 {
     printk(KERN_INFO "[hwhook] module init\n");
@@ -136,4 +142,4 @@ module_exit(hwhook_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("hwhook");
-MODULE_DESCRIPTION("ARM64 user HW breakpoint hook (x0 capture)");
+MODULE_DESCRIPTION("ARM64 user HW breakpoint hook: force set x0");
