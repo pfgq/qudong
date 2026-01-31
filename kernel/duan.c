@@ -11,7 +11,7 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("perf-rw");
-MODULE_DESCRIPTION("ARM64 perf RW watch with ioctl + auto /dev node");
+MODULE_DESCRIPTION("ARM64 perf RW watch with user bp_len");
 
 #define DEVICE_NAME "perf_hook"
 
@@ -21,24 +21,24 @@ MODULE_DESCRIPTION("ARM64 perf RW watch with ioctl + auto /dev node");
 
 /* ioctl 结构 */
 struct perf_hook_req {
-    pid_t          pid;        /* 目标进程 PID */
-    unsigned long  addr;       /* 数据地址（用户 VA） */
-    int            reg;        /* x0-x30 */
-    unsigned long  value;      /* 未使用 */
+    pid_t          pid;
+    unsigned long  addr;
+    int            reg;
+    unsigned int   bp_len;   /* 1 / 2 / 4 / 8 */
 };
 
-/* ===== 全局状态（单实例示例） ===== */
+/* ===== 全局 ===== */
 static struct perf_event *g_event;
 static struct task_struct *g_task;
 static struct perf_hook_req g_req;
 
-/* 字符设备相关 */
+/* char dev */
 static dev_t devno;
 static struct cdev perf_cdev;
 static struct class *perf_class;
 static struct device *perf_device;
 
-/* 按 PID 找 task */
+/* PID → task */
 static struct task_struct *find_task_by_pid(pid_t pid)
 {
     struct task_struct *p;
@@ -51,7 +51,20 @@ static struct task_struct *find_task_by_pid(pid_t pid)
     return NULL;
 }
 
-/* RW 断点回调：打印 PC + 指定寄存器 */
+/* 用户 bp_len → perf bp_len */
+static int convert_bp_len(unsigned int len)
+{
+    switch (len) {
+    case 1: return HW_BREAKPOINT_LEN_1;
+    case 2: return HW_BREAKPOINT_LEN_2;
+    case 4: return HW_BREAKPOINT_LEN_4;
+    case 8: return HW_BREAKPOINT_LEN_8;
+    default:
+        return -EINVAL;
+    }
+}
+
+/* RW handler */
 static void bp_handler(struct perf_event *bp,
                        struct perf_sample_data *data,
                        struct pt_regs *regs)
@@ -65,29 +78,35 @@ static void bp_handler(struct perf_event *bp,
     if (g_req.reg < 0 || g_req.reg > 30)
         return;
 
-    pr_info("[perf-rw] pid=%d pc=%lx x%d=%lx (watch=%lx)\n",
+    pr_info("[perf-rw] pid=%d pc=%lx x%d=%lx (addr=%lx len=%u)\n",
             current->pid,
             regs->pc,
             g_req.reg,
             regs->regs[g_req.reg],
-            g_req.addr);
+            g_req.addr,
+            g_req.bp_len);
 }
 
-/* 安装 RW 断点 */
+/* install RW watch */
 static int install_rw_watch(void)
 {
     struct perf_event_attr attr;
+    int hw_len;
+
+    hw_len = convert_bp_len(g_req.bp_len);
+    if (hw_len < 0)
+        return -EINVAL;
 
     hw_breakpoint_init(&attr);
     attr.type    = PERF_TYPE_BREAKPOINT;
     attr.bp_type = HW_BREAKPOINT_R | HW_BREAKPOINT_W;
     attr.bp_addr = g_req.addr;
-    attr.bp_len  = HW_BREAKPOINT_LEN_4;
+    attr.bp_len  = hw_len;
 
     g_event = perf_event_create_kernel_counter(
         &attr,
-        -1,             /* 所有 CPU */
-        g_task,         /* 绑定目标 task */
+        -1,
+        g_task,
         bp_handler,
         NULL
     );
@@ -97,12 +116,12 @@ static int install_rw_watch(void)
         return -EINVAL;
     }
 
-    pr_info("[perf-rw] installed pid=%d addr=%lx reg=x%d\n",
-            g_req.pid, g_req.addr, g_req.reg);
+    pr_info("[perf-rw] installed pid=%d addr=%lx len=%u\n",
+            g_req.pid, g_req.addr, g_req.bp_len);
     return 0;
 }
 
-/* ioctl 处理 */
+/* ioctl */
 static long perf_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
     if (cmd != PERF_IOCTL_RW_WATCH)
@@ -126,38 +145,27 @@ static const struct file_operations perf_fops = {
     .unlocked_ioctl = perf_ioctl,
 };
 
-/* ===== 模块初始化：自动创建 /dev/perf_hook ===== */
+/* init */
 static int __init perf_init(void)
 {
     int ret;
 
-    /* 1. 分配设备号 */
     ret = alloc_chrdev_region(&devno, 0, 1, DEVICE_NAME);
     if (ret)
         return ret;
 
-    /* 2. 注册 cdev */
     cdev_init(&perf_cdev, &perf_fops);
     ret = cdev_add(&perf_cdev, devno, 1);
     if (ret)
         goto err_cdev;
 
-    /* 3. 创建 class */
     perf_class = class_create(THIS_MODULE, DEVICE_NAME);
     if (IS_ERR(perf_class)) {
         ret = PTR_ERR(perf_class);
         goto err_class;
     }
 
-    /* 4. 创建设备节点 /dev/perf_hook */
-    perf_device = device_create(
-        perf_class,
-        NULL,
-        devno,
-        NULL,
-        DEVICE_NAME
-    );
-
+    perf_device = device_create(perf_class, NULL, devno, NULL, DEVICE_NAME);
     if (IS_ERR(perf_device)) {
         ret = PTR_ERR(perf_device);
         goto err_device;
@@ -175,14 +183,13 @@ err_cdev:
     return ret;
 }
 
-/* ===== 模块退出 ===== */
+/* exit */
 static void __exit perf_exit(void)
 {
     if (g_event) {
         perf_event_release_kernel(g_event);
         g_event = NULL;
     }
-
     if (g_task) {
         put_task_struct(g_task);
         g_task = NULL;
