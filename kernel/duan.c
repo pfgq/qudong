@@ -1,14 +1,18 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/fs.h>
 #include <linux/miscdevice.h>
+#include <linux/fs.h>
 #include <linux/uaccess.h>
 #include <linux/pid.h>
 #include <linux/sched.h>
+#include <linux/mutex.h>
+#include <linux/wait.h>
 #include <linux/perf_event.h>
 #include <linux/hw_breakpoint.h>
 #include <asm/ptrace.h>
+
+/* ================= ioctl ================= */
 
 #define HWHOOK_IOCTL_MAGIC  0xF7
 #define HWHOOK_IOCTL_START  _IOWR(HWHOOK_IOCTL_MAGIC, 1, struct hwhook_request)
@@ -21,6 +25,7 @@
  * 31   : sp
  * 32   : pc
  */
+
 struct hwhook_regs {
     uint64_t x[31];   /* x0~x30 */
     uint64_t sp;
@@ -35,20 +40,26 @@ struct hwhook_request {
     uint32_t reg_index;
     uint64_t new_value;
 
-    struct hwhook_regs regs; /* 返回给用户态 */
+    struct hwhook_regs regs; /* 回传 */
 };
 
 /* ================= 全局状态 ================= */
+
 static struct perf_event *g_bp;
 static struct task_struct *g_task;
 static struct perf_event_attr g_orig_attr;
 static struct perf_event_attr g_next_attr;
 
 static struct hwhook_request g_req;
+
 static bool g_second_hit;
+static bool g_hit_done;
+
 static DEFINE_MUTEX(g_lock);
+static wait_queue_head_t g_waitq;
 
 /* ================= HWBP 回调 ================= */
+
 static void hwhook_handler(struct perf_event *bp,
                            struct perf_sample_data *data,
                            struct pt_regs *regs)
@@ -71,7 +82,7 @@ static void hwhook_handler(struct perf_event *bp,
            "[hwhook] HIT pc=0x%llx x0=0x%llx\n",
            regs->pc, regs->regs[0]);
 
-    /* hook 模式：只在第一次命中时改 */
+    /* hook 模式：只在第一次命中修改 */
     if (!g_second_hit && g_req.mode == HWHOOK_MODE_HOOK) {
         if (g_req.reg_index < 31) {
             regs->regs[g_req.reg_index] = g_req.new_value;
@@ -80,15 +91,22 @@ static void hwhook_handler(struct perf_event *bp,
         } else if (g_req.reg_index == 32) {
             regs->pc = g_req.new_value;
         }
+
         printk(KERN_INFO
                "[hwhook] hook reg %u -> 0x%llx\n",
                g_req.reg_index, g_req.new_value);
     }
 
+    /* 第一次命中：唤醒 ioctl */
+    if (!g_second_hit) {
+        g_hit_done = true;
+        wake_up_interruptible(&g_waitq);
+    }
+
     /* 双命中处理 */
     if (!g_second_hit) {
         memcpy(&g_next_attr, &g_orig_attr, sizeof(g_orig_attr));
-        g_next_attr.bp_addr = regs->pc + 4; /* ARM64 固定 4 字节 */
+        g_next_attr.bp_addr = regs->pc + 4; /* ARM64 */
         modify_user_hw_breakpoint(bp, &g_next_attr);
         g_second_hit = true;
     } else {
@@ -100,6 +118,7 @@ static void hwhook_handler(struct perf_event *bp,
 }
 
 /* ================= ioctl ================= */
+
 static long hwhook_ioctl(struct file *file,
                          unsigned int cmd,
                          unsigned long arg)
@@ -113,6 +132,9 @@ static long hwhook_ioctl(struct file *file,
         return -EFAULT;
 
     mutex_lock(&g_lock);
+
+    g_hit_done  = false;
+    g_second_hit = false;
 
     /* 清理旧断点 */
     if (g_bp) {
@@ -138,8 +160,6 @@ static long hwhook_ioctl(struct file *file,
     g_orig_attr.bp_type = HW_BREAKPOINT_X;
     g_orig_attr.disabled = 0;
 
-    g_second_hit = false;
-
     g_bp = register_user_hw_breakpoint(
         &g_orig_attr, hwhook_handler, NULL, g_task);
 
@@ -154,10 +174,24 @@ static long hwhook_ioctl(struct file *file,
            g_req.pid, g_req.bp_addr);
 
     mutex_unlock(&g_lock);
+
+    /* ===== 等待断点命中 ===== */
+    wait_event_interruptible(g_waitq, g_hit_done);
+
+    mutex_lock(&g_lock);
+
+    /* 把寄存器回传用户态 */
+    if (copy_to_user((void __user *)arg, &g_req, sizeof(g_req))) {
+        mutex_unlock(&g_lock);
+        return -EFAULT;
+    }
+
+    mutex_unlock(&g_lock);
     return 0;
 }
 
 /* ================= 设备 ================= */
+
 static const struct file_operations hwhook_fops = {
     .owner          = THIS_MODULE,
     .unlocked_ioctl = hwhook_ioctl,
@@ -171,6 +205,7 @@ static struct miscdevice hwhook_dev = {
 
 static int __init hwhook_init(void)
 {
+    init_waitqueue_head(&g_waitq);
     misc_register(&hwhook_dev);
     printk(KERN_INFO "[hwhook] module loaded\n");
     return 0;
