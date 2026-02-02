@@ -27,7 +27,7 @@
  */
 
 struct hwhook_regs {
-    uint64_t x[31];   /* x0~x30 */
+    uint64_t x[31];
     uint64_t sp;
     uint64_t pc;
 };
@@ -40,7 +40,7 @@ struct hwhook_request {
     uint32_t reg_index;
     uint64_t new_value;
 
-    struct hwhook_regs regs; /* 回传 */
+    struct hwhook_regs regs;
 };
 
 /* ================= 全局状态 ================= */
@@ -58,6 +58,9 @@ static bool g_hit_done;
 static DEFINE_MUTEX(g_lock);
 static wait_queue_head_t g_waitq;
 
+/* ★ 来自 hw_breakpoint.c 的全局 gate mutex */
+extern struct mutex hwhook_gate_lock;
+
 /* ================= HWBP 回调 ================= */
 
 static void hwhook_handler(struct perf_event *bp,
@@ -71,7 +74,6 @@ static void hwhook_handler(struct perf_event *bp,
 
     mutex_lock(&g_lock);
 
-    /* 保存寄存器 */
     for (i = 0; i < 31; i++)
         g_req.regs.x[i] = regs->regs[i];
 
@@ -82,31 +84,27 @@ static void hwhook_handler(struct perf_event *bp,
            "[hwhook] HIT pc=0x%llx x0=0x%llx\n",
            regs->pc, regs->regs[0]);
 
-    /* hook 模式：只在第一次命中修改 */
     if (!g_second_hit && g_req.mode == HWHOOK_MODE_HOOK) {
-        if (g_req.reg_index < 31) {
+        if (g_req.reg_index < 31)
             regs->regs[g_req.reg_index] = g_req.new_value;
-        } else if (g_req.reg_index == 31) {
+        else if (g_req.reg_index == 31)
             regs->sp = g_req.new_value;
-        } else if (g_req.reg_index == 32) {
+        else if (g_req.reg_index == 32)
             regs->pc = g_req.new_value;
-        }
 
         printk(KERN_INFO
                "[hwhook] hook reg %u -> 0x%llx\n",
                g_req.reg_index, g_req.new_value);
     }
 
-    /* 第一次命中：唤醒 ioctl */
     if (!g_second_hit) {
         g_hit_done = true;
         wake_up_interruptible(&g_waitq);
     }
 
-    /* 双命中处理 */
     if (!g_second_hit) {
         memcpy(&g_next_attr, &g_orig_attr, sizeof(g_orig_attr));
-        g_next_attr.bp_addr = regs->pc + 4; /* ARM64 */
+        g_next_attr.bp_addr = regs->pc + 4;
         modify_user_hw_breakpoint(bp, &g_next_attr);
         g_second_hit = true;
     } else {
@@ -133,10 +131,9 @@ static long hwhook_ioctl(struct file *file,
 
     mutex_lock(&g_lock);
 
-    g_hit_done  = false;
+    g_hit_done   = false;
     g_second_hit = false;
 
-    /* 清理旧断点 */
     if (g_bp) {
         unregister_hw_breakpoint(g_bp);
         g_bp = NULL;
@@ -160,13 +157,19 @@ static long hwhook_ioctl(struct file *file,
     g_orig_attr.bp_type = HW_BREAKPOINT_X;
     g_orig_attr.disabled = 0;
 
+    /* ★★★ 核心：持有 gate mutex 的上下文里注册 BRP ★★★ */
+    mutex_lock(&hwhook_gate_lock);
+
     g_bp = register_user_hw_breakpoint(
         &g_orig_attr, hwhook_handler, NULL, g_task);
+
+    mutex_unlock(&hwhook_gate_lock);
+    /* ★★★ gate 结束 ★★★ */
 
     if (IS_ERR(g_bp)) {
         g_bp = NULL;
         mutex_unlock(&g_lock);
-        return -EINVAL;
+        return -EPERM;
     }
 
     printk(KERN_INFO
@@ -175,12 +178,10 @@ static long hwhook_ioctl(struct file *file,
 
     mutex_unlock(&g_lock);
 
-    /* ===== 等待断点命中 ===== */
     wait_event_interruptible(g_waitq, g_hit_done);
 
     mutex_lock(&g_lock);
 
-    /* 把寄存器回传用户态 */
     if (copy_to_user((void __user *)arg, &g_req, sizeof(g_req))) {
         mutex_unlock(&g_lock);
         return -EFAULT;
